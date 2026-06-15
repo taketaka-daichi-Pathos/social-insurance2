@@ -1,0 +1,68 @@
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #f0f2f5; padding-bottom: 12px;">
+    
+  <div style="font-size: 18px; font-weight: bold; color: #0056b3;">
+    👥 正式従業員一覧マスタ
+  </div>
+  
+  <div style="display: flex; align-items: center; gap: 15px;">
+    
+    <input type="text" id="search-emp" placeholder="🔍 社員名で検索..." style="box-sizing: border-box; margin: 0; padding: 8px 14px; width: 240px; border: 1px solid #ced4da; border-radius: 4px; font-size: 13px;">
+    
+    <div style="display: flex; gap: 15px; align-items: center; background: #f4f6f8; padding: 6px 12px; border-radius: 6px; border: 1px solid #dee2e6;">
+      
+      <div style="display: flex; align-items: center;">
+        <label style="font-size: 12px; font-weight: bold; color: #555; margin-right: 5px;">📋 区分: </label>
+        <select id="emp-list-type-filter" style="border: none; border-bottom: 1px solid #ced4da; background: transparent; font-size: 13px; color: #0056b3; font-weight: bold; cursor: pointer; outline: none; padding-bottom: 2px;">
+          <option value="all">すべて表示</option>
+          <option value="regular">一般（17日基準）</option>        
+          <option value="part_time">パート（15日基準）</option>    
+          <option value="short_time">短時間（11日基準）</option>
+        </select>
+      </div>
+
+      <div style="width: 1px; height: 20px; background: #ccc;"></div>
+
+      <div style="display: flex; gap: 8px;">
+        <button id="btn-filter-active" style="padding: 6px 20px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;">在籍中（現役）</button>
+        <button id="btn-filter-retired" style="padding: 6px 20px; background: #e0e0e0; color: #555; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;">退職済</button>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+  <div style="max-height: 60vh; overflow-y: auto; overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+    <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; min-width: 900px;">
+      
+      <thead style="position: sticky; top: 0; background-color: #f8f9fa; z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+        <tr style="color: #555;">
+          <th style="padding: 12px 10px; border-bottom: 2px solid #dee2e6;">社員番号</th>
+          <th style="padding: 12px 10px; border-bottom: 2px solid #dee2e6;">氏名 (漢字 / フリガナ)</th>
+          <th style="padding: 12px 10px; border-bottom: 2px solid #dee2e6;">メールアドレス</th>
+          <th style="padding: 12px 10px; border-bottom: 2px solid #dee2e6;">雇用形態</th>
+          <th style="padding: 12px 10px; border-bottom: 2px solid #dee2e6;">入社日</th>
+          <th style="padding: 12px 10px; border-bottom: 2px solid #dee2e6;">基本給 (報酬月額)</th>
+          <th style="padding: 12px 10px; border-bottom: 2px solid #dee2e6;">固定的手当合計</th>
+          <th style="padding: 12px 10px; border-bottom: 2px solid #dee2e6;">週所定時間</th>
+          <th style="padding: 12px 10px; border-bottom: 2px solid #dee2e6;">操作</th> 
+        </tr>
+      </thead>
+      <tbody id="employee-table-body">
+        <tr><td colspan="9" style="text-align:center; padding:30px; color:#666;">🔄 現役社員データを読み込み中...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="employee-detail-modal" class="modal hidden">
+  <div class="modal-content" style="max-width: 800px;">
+    <div class="modal-header" style="background: #17a2b8;">
+      <h3 style="margin: 0;">👤 従業員マスター詳細</h3>
+      <button id="btn-close-detail" class="modal-close">✖ 閉じる</button>
+    </div>
+    <div class="modal-body" style="padding: 24px; overflow-y: auto; display: block; background: #f8f9fa;">
+      <div id="employee-detail-content"></div>
+    </div>
+  </div>
+</div>

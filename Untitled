@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>労務ダッシュボード</title>
+  <style>body { font-family: sans-serif; background-color: #f4f6f9; display: flex; justify-content: center; padding-top: 40px; margin: 0; }</style>
+</head>
+<body>
+  <div id="manager-dashboard" style="width: 100%; max-width: 900px; padding: 0 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+      <h2 style="color: #0056b3; margin: 0;">👑 労務担当用ダッシュボード</h2>
+      <button id="logout-btn" style="padding: 6px 12px; background-color: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">ログアウト</button>
+    </div>
+    <div style="background: white; padding: 16px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px;">
+      <h3 style="margin-top: 0; margin-bottom: 12px; font-size: 14px; color: #555;">✉️ 新入社員のアカウント招待（仮発行）</h3>
+      <form id="invite-form" style="display: flex; gap: 10px;">
+        <input type="email" id="invite-email" required placeholder="new-employee@company.com" style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+        <button type="submit" style="padding: 8px 20px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">招待メール送信</button>
+      </form>
+      <div id="invite-msg" style="font-size: 12px; margin-top: 8px; display: none;"></div>
+    </div>
+    <div style="background: white; padding: 16px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+      <h3 style="margin-top: 0; margin-bottom: 12px; font-size: 14px; color: #555;">👥 従業員の手続き進捗一覧</h3>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px; text-align: left;">
+        <thead><tr style="border-bottom: 2px solid #eee; color: #666;"><th style="padding: 10px 8px;">メールアドレス</th><th style="padding: 10px 8px;">氏名</th><th style="padding: 10px 8px; width: 120px;">進捗フラグ</th><th style="padding: 10px 8px;">対応タスク / アラート</th></tr></thead>
+        <tbody id="employee-list-body">
+          <tr style="border-bottom: 1px solid #eee;"><td style="padding: 12px 8px;">satou.h@example.com</td><td style="padding: 12px 8px;">佐藤 花子</td><td style="padding: 12px 8px;"><span style="background-color: #ffc107; color: #333; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">🟨 確認待ち</span></td><td style="padding: 12px 8px; color: #856404; font-size: 13px;">提出データの確認・承認が必要です</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script type="module" src="/src/manager.ts"></script>
+</body>
+</html>

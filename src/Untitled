@@ -1,0 +1,22 @@
+    <div class="panel">
+      <div class="sub-tabs" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e9ecef; padding-bottom: 10px;">
+        <button class="sub-tab-btn active" data-sub-target="payroll-monthly" style="padding: 8px 16px; border: none; background: #0056b3; color: white; border-radius: 4px; cursor: pointer; font-weight: bold;">📅 月額給与・随時改定</button>
+        <button class="sub-tab-btn" data-sub-target="payroll-santei" style="padding: 8px 16px; border: none; background: #f8f9fa; color: #555; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; font-weight: bold;">🏢 算定基礎 (年次処理)</button>
+      </div>
+
+      <div id="payroll-monthly" class="sub-tab-content">
+        <h3 style="color: #333; margin-bottom: 15px;">📅 毎月の給与入力と月額変更判定</h3>
+        <p style="color: #666; font-size: 13px;">毎月の実績給与を入力します。固定的賃金に変動があった場合、自動的に3ヶ月平均を計算し、月額変更（2等級以上の差）の対象者を検知します。</p>
+        <div style="padding: 20px; background-color: #f8f9fa; border: 1px dashed #ccc; text-align: center; color: #999; margin-top: 15px;">
+          月額給与のUIをここに構築します
+        </div>
+      </div>
+
+      <div id="payroll-santei" class="sub-tab-content" style="display: none;">
+        <h3 style="color: #333; margin-bottom: 15px;">🏢 算定基礎届 (4〜6月平均) の一括処理</h3>
+        <p style="color: #666; font-size: 13px;">毎年7月に行う算定基礎届の処理画面です。4月・5月・6月の給与実績をもとに、全従業員の新しい標準報酬月額を一括で計算します。</p>
+        <div style="padding: 20px; background-color: #f8f9fa; border: 1px dashed #ccc; text-align: center; color: #999; margin-top: 15px;">
+          算定基礎のUIをここに構築します
+        </div>
+      </div>
+    </div>

@@ -1,0 +1,247 @@
+<div style="display: flex; border-bottom: 2px solid #e2e8f0; margin-bottom: 24px; gap: 10px;">
+  <button class="settings-sub-tab active" onclick="switchSettingsTab('settings-egov', this)" style="padding: 10px 20px; font-weight: bold; background: none; border: none; border-bottom: 3px solid #0056b3; color: #0056b3; cursor: pointer;">
+      🏢 事業所・公的番号設定
+  </button>
+  <button class="settings-sub-tab" onclick="switchSettingsTab('settings-payroll', this)" style="padding: 10px 20px; font-weight: bold; background: none; border: none; color: #64748b; cursor: pointer;">
+      📅 給与支払日設定
+  </button>
+  <button class="settings-sub-tab" onclick="switchSettingsTab('settings-rates', this)" style="padding: 10px 20px; font-weight: bold; background: none; border: none; color: #64748b; cursor: pointer;">
+      📊 料率設定
+  </button>
+</div>
+
+<div id="settings-egov" class="settings-tab-content" style="display: block;">
+  <div style="background: #ffffff; padding: 24px; border-radius: 8px; border: 1px solid #ced4da; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 24px;">
+      <h3 style="margin-top: 0; color: #343a40; font-size: 16px; border-bottom: 2px solid #f1f3f5; padding-bottom: 12px; margin-bottom: 16px;">
+          🏢 事業所・公的番号設定（e-Gov連携用）
+      </h3>
+      <p style="font-size: 13px; color: #6c757d; margin-bottom: 24px; line-height: 1.6;">
+          CSV電子申請に必要な事業所情報を設定します。ここで設定した情報がすべての届出（CSV）の[kanri]レコードに印字されます。
+      </p>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div>
+              <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">事業所名</label>
+              <input type="text" id="master-company-name" placeholder="例: 株式会社パトスロゴス" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; background: #fdfdfd;">
+          </div>
+          <div>
+              <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">事業主氏名</label>
+              <input type="text" id="master-employer-name" placeholder="例: 竹高 大地" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; background: #fdfdfd;">
+          </div>
+
+          <div>
+              <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">郵便番号</label>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                  <input type="text" id="master-zip1" placeholder="100" style="width: 80px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+                  <span style="color: #adb5bd; font-weight: bold;">-</span> 
+                  <input type="text" id="master-zip2" placeholder="0000" style="width: 100px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+              </div>
+          </div>
+          <div>
+              <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">電話番号</label>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                  <input type="text" id="master-tel1" placeholder="03" style="width: 70px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+                  <span style="color: #adb5bd; font-weight: bold;">-</span> 
+                  <input type="text" id="master-tel2" placeholder="1234" style="width: 90px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+                  <span style="color: #adb5bd; font-weight: bold;">-</span> 
+                  <input type="text" id="master-tel3" placeholder="5678" style="width: 90px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+              </div>
+          </div>
+
+          <div style="grid-column: span 2;">
+              <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">事業所所在地</label>
+              <input type="text" id="master-address" placeholder="例: 東京都港区..." style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; background: #fdfdfd;">
+          </div>
+      </div>
+
+      <hr style="border: none; border-top: 1px dashed #ced4da; margin: 24px 0;">
+
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
+          <div>
+              <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">都道府県コード(2桁)</label>
+              <input type="text" id="master-pref-code" placeholder="例: 13" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+          </div>
+          <div>
+              <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">郡市区符号(2桁)</label>
+              <input type="text" id="master-city-code" placeholder="例: 01" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+          </div>
+          <div>
+              <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">整理記号(年金)</label>
+              <input type="text" id="master-pension-symbol" placeholder="例: ｱｲｳ" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+          </div>
+          <div>
+              <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">事業所番号(年金)</label>
+              <input type="text" id="master-pension-number" placeholder="例: 12345" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+          </div>
+          
+          <div style="grid-column: span 2;">
+              <label style="font-weight: bold; font-size: 13px; color: #0b7285; display: block; margin-bottom: 6px;">雇用保険事業所番号(ハロワ)</label>
+              <input type="text" id="master-emp-ins-number" placeholder="例: 1301-123456-7" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #99e9f2; border-radius: 4px; background: #e3fafc;">
+          </div>
+      </div>
+
+      <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #f1f3f5; text-align: right; display: flex; justify-content: flex-end; align-items: center; gap: 16px;">
+          <span id="save-msg-numbers" style="color: #e8590c; font-weight: bold; display: none; font-size: 14px; animation: fadeIn 0.3s;">
+              ✅ 設定を保存しました！
+          </span>
+          <button id="btn-save-company-numbers" style="background: #1971c2; color: white; border: none; padding: 12px 32px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; box-shadow: 0 4px 6px rgba(25, 113, 194, 0.2); transition: all 0.2s;">
+              💾 設定を保存する
+          </button>
+      </div>
+  </div>
+</div>
+
+<div id="settings-payroll" class="settings-tab-content" style="display: none;">
+  <div class="panel" style="background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;">
+      <h3 style="margin-top: 0; color: #0056b3;">🏢 給与計算連動マスタ（全社共通ルール）</h3>
+      <p style="font-size: 12px; color: #666;">この設定は「給与タブ」の期間表示や、社会保険の判定タイミングに連動します。</p>
+      
+      <div style="display: flex; gap: 15px; margin-top: 15px;">
+          <div style="flex: 1;">
+              <label style="font-size: 12px; font-weight: bold;">給与締日</label>
+              <select id="company-cutoff-day" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+                  <option value="10">10日</option>
+                  <option value="15">15日</option>
+                  <option value="20">20日</option>
+                  <option value="25">25日</option>
+                  <option value="末" selected>末日</option>
+              </select>
+          </div>
+          <div style="flex: 1;">
+              <label style="font-size: 12px; font-weight: bold;">支払月</label>
+              <select id="company-payment-month" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+                  <option value="current">当月払い</option>
+                  <option value="next" selected>翌月払い</option>
+              </select>
+          </div>
+          <div style="flex: 1;">
+              <label style="font-size: 12px; font-weight: bold;">支払日</label>
+              <select id="company-payment-day" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+                  <option value="10">10日</option>
+                  <option value="15">15日</option>
+                  <option value="20">20日</option>
+                  <option value="25" selected>25日</option>
+                  <option value="末">末日</option>
+              </select>
+          </div>
+      </div>
+      <button id="btn-save-company-pay-rules" style="margin-top: 15px; padding: 10px 20px; background-color: #28a745; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;">
+          💾 給与ルールを保存する
+      </button>
+  </div>
+</div>
+
+<div id="settings-rates" class="settings-tab-content" style="display: none;">
+  <div style="background: #ffffff; padding: 24px; border-radius: 8px; border: 1px solid #ced4da; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 24px;">
+      <h3 style="margin-top: 0; color: #343a40; font-size: 16px; border-bottom: 2px solid #f1f3f5; padding-bottom: 12px; margin-bottom: 16px;">
+          📊 社会保険料率マスター設定
+      </h3>
+      <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">
+          貴社の加入している健康保険の種類を選択し、料率を設定してください。
+      </p>
+
+      <div style="margin-bottom: 20px; background: #fff3cd; border-left: 5px solid #ffc107; padding: 15px; border-radius: 4px;">
+          <label style="font-weight: bold; color: #856404; display: block; margin-bottom: 5px;">📅 適用開始月（必須）</label>
+          <p style="font-size: 12px; color: #856404; margin: 0 0 10px 0;">法改正や料率変更が適用される「最初の月」を選択してください。</p>
+          <input type="month" id="input-apply-month" style="padding: 8px; font-size: 16px; border: 1px solid #ffeeba; border-radius: 4px; cursor: pointer;">
+      </div>
+
+      <div style="margin-bottom: 25px; display: flex; gap: 20px; background: #e9ecef; padding: 15px; border-radius: 8px;">
+          <label style="font-size: 16px; font-weight: bold; cursor: pointer;">
+              <input type="radio" name="ins-type" value="kyokai" checked style="transform: scale(1.2); margin-right: 5px;">
+              🗾 協会けんぽ（都道府県から選択 / 労使折半）
+          </label>
+          <label style="font-size: 16px; font-weight: bold; cursor: pointer;">
+              <input type="radio" name="ins-type" value="kumiai" style="transform: scale(1.2); margin-right: 5px;">
+              🏢 組合健保（大企業向け / 負担割合を個別設定）
+          </label>
+      </div>
+
+      <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 25px;">
+          
+          <div id="kyokai-section">
+              <div style="margin-bottom: 20px;">
+                  <label style="display: block; font-weight: bold; margin-bottom: 8px; color: #495057;">📍 事業所所在地（都道府県）</label>
+                  <select id="select-prefecture" style="width: 100%; max-width: 300px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 16px; cursor: pointer;">
+                      <option value="" disabled selected>選択してください</option>
+                      <option value="北海道">北海道</option><option value="青森県">青森県</option><option value="岩手県">岩手県</option>
+                      <option value="宮城県">宮城県</option><option value="秋田県">秋田県</option><option value="山形県">山形県</option>
+                      <option value="福島県">福島県</option><option value="茨城県">茨城県</option><option value="栃木県">栃木県</option>
+                      <option value="群馬県">群馬県</option><option value="埼玉県">埼玉県</option><option value="千葉県">千葉県</option>
+                      <option value="東京都">東京都</option><option value="神奈川県">神奈川県</option><option value="新潟県">新潟県</option>
+                      <option value="富山県">富山県</option><option value="石川県">石川県</option><option value="福井県">福井県</option>
+                      <option value="山梨県">山梨県</option><option value="長野県">長野県</option><option value="岐阜県">岐阜県</option>
+                      <option value="静岡県">静岡県</option><option value="愛知県">愛知県</option><option value="三重県">三重県</option>
+                      <option value="滋賀県">滋賀県</option><option value="京都府">京都府</option><option value="大阪府">大阪府</option>
+                      <option value="兵庫県">兵庫県</option><option value="奈良県">奈良県</option><option value="和歌山県">和歌山県</option>
+                      <option value="鳥取県">鳥取県</option><option value="島根県">島根県</option><option value="岡山県">岡山県</option>
+                      <option value="広島県">広島県</option><option value="山口県">山口県</option><option value="徳島県">徳島県</option>
+                      <option value="香川県">香川県</option><option value="愛媛県">愛媛県</option><option value="高知県">高知県</option>
+                      <option value="福岡県">福岡県</option><option value="佐賀県">佐賀県</option><option value="長崎県">長崎県</option>
+                      <option value="熊本県">熊本県</option><option value="大分県">大分県</option><option value="宮崎県">宮崎県</option>
+                      <option value="鹿児島県">鹿児島県</option><option value="沖縄県">沖縄県</option>
+                  </select>
+              </div>
+
+              <div style="margin-bottom: 20px; background: #fff; border: 1px solid #ced4da; padding: 15px; border-radius: 6px;">
+                  <label style="display: block; font-weight: bold; margin-bottom: 8px; color: #495057;">✍️ 適用する健康保険料率（全体）%</label>
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                      <input type="number" id="input-custom-rate" step="0.01" style="width: 100px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px;" placeholder="例: 9.98">
+                      <span style="font-size: 16px; font-weight: bold;">%</span>
+                      <button id="btn-reset-rate" style="padding: 6px 12px; font-size: 12px; cursor: pointer; background: #e9ecef; border: 1px solid #ccc; border-radius: 4px;">元の料率に戻す</button>
+                  </div>
+                  <p style="margin: 5px 0 0 0; font-size: 12px; color: #888;">※会社と本人で半分ずつ（折半）負担します。</p>
+              </div>
+          </div>
+
+          <div id="kumiai-section" style="display: none; background: #fff; border: 2px solid #0d6efd; padding: 20px; border-radius: 6px; margin-bottom: 20px;">
+              <div style="margin-bottom: 15px;">
+                  <label style="display: block; font-weight: bold; margin-bottom: 5px; color: #0d6efd;">🏢 組合名</label>
+                  <input type="text" id="input-kumiai-name" style="width: 100%; max-width: 400px; padding: 8px; border: 1px solid #ccc; border-radius: 4px;" placeholder="例: 関東ITソフトウェア健康保険組合">
+              </div>
+              
+              <div style="display: flex; gap: 20px;">
+                  <div style="flex: 1; background: #f8f9fa; padding: 15px; border-radius: 6px; border: 1px solid #dee2e6;">
+                      <h4 style="margin: 0 0 10px 0; color: #333;">🏥 健康保険料率</h4>
+                      <label style="font-size: 13px;">本人負担: <input type="number" id="k-health-emp" step="0.001" style="width: 70px; padding: 4px;"> %</label><br>
+                      <label style="font-size: 13px; margin-top: 5px; display: inline-block;">会社負担: <input type="number" id="k-health-comp" step="0.001" style="width: 70px; padding: 4px;"> %</label>
+                  </div>
+                  <div style="flex: 1; background: #f8f9fa; padding: 15px; border-radius: 6px; border: 1px solid #dee2e6;">
+                      <h4 style="margin: 0 0 10px 0; color: #333;">🧓 介護保険料率</h4>
+                      <label style="font-size: 13px;">本人負担: <input type="number" id="k-nursing-emp" step="0.001" style="width: 70px; padding: 4px;"> %</label><br>
+                      <label style="font-size: 13px; margin-top: 5px; display: inline-block;">会社負担: <input type="number" id="k-nursing-comp" step="0.001" style="width: 70px; padding: 4px;"> %</label>
+                  </div>
+              </div>
+          </div>
+
+          <div style="background: #fff; border: 1px solid #dee2e6; padding: 20px; border-radius: 6px; margin-bottom: 20px;">
+              <h3 style="margin-top: 0; color: #333; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px;">🌱 子育て関連・その他（共通設定）</h3>
+              
+              <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                  <div style="flex: 1; min-width: 250px; background: #f8f9fa; padding: 15px; border-radius: 4px;">
+                      <h4 style="margin: 0 0 10px 0; font-size: 14px; color: #495057;">🏢 子ども・子育て拠出金</h4>
+                      <p style="font-size: 12px; color: #666; margin: 0 0 10px 0;">※厚生年金ベース / 全額会社負担</p>
+                      <label style="font-size: 14px; font-weight: bold;">
+                          料率: <input type="number" id="input-child-contribution" step="0.001" value="0.360" style="width: 80px; padding: 6px; border: 1px solid #ccc; border-radius: 4px;"> %
+                      </label>
+                  </div>
+
+                  <div style="flex: 1; min-width: 250px; background: #fff8e1; padding: 15px; border-radius: 4px; border: 1px solid #ffeeba;">
+                      <h4 style="margin: 0 0 10px 0; font-size: 14px; color: #856404;">👶 子ども・子育て支援金（2026年4月〜）</h4>
+                      <p style="font-size: 12px; color: #666; margin: 0 0 10px 0;">※健康保険ベース / 労使折半</p>
+                      <label style="font-size: 13px;">本人負担: <input type="number" id="input-child-support-emp" step="0.001" value="0.100" style="width: 70px; padding: 4px; border: 1px solid #ccc; border-radius: 4px;"> %</label><br>
+                      <label style="font-size: 13px; margin-top: 8px; display: inline-block;">会社負担: <input type="number" id="input-child-support-comp" step="0.001" value="0.100" style="width: 70px; padding: 4px; border: 1px solid #ccc; border-radius: 4px;"> %</label>
+                  </div>
+              </div>
+          </div>
+
+          <div style="text-align: right; margin-top: 20px;">
+              <span id="save-msg-insurance" style="margin-right: 15px; color: #28a745; font-weight: bold; display: none;">保存しました！</span>
+              <button id="btn-save-insurance-master" style="background: #0d6efd; color: white; border: none; padding: 12px 24px; border-radius: 4px; font-size: 16px; font-weight: bold; cursor: pointer;">
+                  💾 この設定をDBに保存する
+              </button>
+          </div>
+      </div>
+  </div>
+</div>
+

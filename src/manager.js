@@ -62,8 +62,8 @@ async function sendInviteEmail(email) {
     try {
         await emailjs.send('service_zzdwydd', 'template_8ov0gbq', {
             to_email: email,
-            // 👇 バッククォートをやめて、普通のシングルクォートと「+」で連結する確実な方法に変更！
-            invite_link: 'http://localhost:5173/?email=' + email
+            // 🌟 ここを本番URLに変更！！
+            invite_link: 'https://kensyu10152.web.app/?email=' + email
         }, 'C836W6NWAnsVBtBBu');
         return true;
     }

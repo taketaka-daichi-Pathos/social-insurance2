@@ -33,22 +33,23 @@
             <input type="text" id="master-branch-name" placeholder="例: 本社" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; background: #fff3cd; border-color: #ffeeba;">
             <p style="margin: 4px 0 0; font-size: 11px; color: #6c757d;"></p>
         　</div>
-          <div>
-              <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">郵便番号</label>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                  <input type="text" id="master-zip1" placeholder="100" style="width: 80px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
-                  <span style="color: #adb5bd; font-weight: bold;">-</span> 
-                  <input type="text" id="master-zip2" placeholder="0000" style="width: 100px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
-              </div>
-          </div>
+        <div>
+            <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px; ">郵便番号</label>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="text" id="master-zip1" placeholder="100" maxlength="3" inputmode="numeric" pattern="\d*" style="width: 80px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+                <span style="color: #adb5bd; font-weight: bold;">-</span> 
+                <input type="text" id="master-zip2" placeholder="0000" maxlength="4" inputmode="numeric" pattern="\d*" style="width: 100px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+            </div>
+        </div>
+
           <div>
               <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">電話番号</label>
               <div style="display: flex; align-items: center; gap: 8px;">
-                  <input type="text" id="master-tel1" placeholder="03" style="width: 70px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+                  <input type="text" id="master-tel1" placeholder="03" maxlength="4" inputmode="numeric" pattern="\d*" style="width: 70px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
                   <span style="color: #adb5bd; font-weight: bold;">-</span> 
-                  <input type="text" id="master-tel2" placeholder="1234" style="width: 90px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+                  <input type="text" id="master-tel2" placeholder="1234" maxlength="4" inputmode="numeric" pattern="\d*" style="width: 90px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
                   <span style="color: #adb5bd; font-weight: bold;">-</span> 
-                  <input type="text" id="master-tel3" placeholder="5678" style="width: 90px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
+                  <input type="text" id="master-tel3" placeholder="5678" maxlength="4" inputmode="numeric" pattern="\d*" style="width: 90px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; text-align: center;">
               </div>
           </div>
 
@@ -63,11 +64,11 @@
       <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
         <div>
             <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">都道府県コード(2桁)</label>
-            <input type="text" id="master-pref-code" class="strict-number" inputmode="numeric" placeholder="例: 13" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+            <input type="text" id="master-pref-code" class="strict-number" maxlength="2" inputmode="numeric" pattern="\d*" placeholder="例: 13" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
         </div>
         <div>
             <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">郡市区符号(2桁)</label>
-            <input type="text" id="master-city-code" class="strict-number" inputmode="numeric" placeholder="例: 01" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+            <input type="text" id="master-city-code" class="strict-number" maxlength="2" inputmode="numeric" pattern="\d*" placeholder="例: 01" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
         </div>
         <div>
             <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">整理記号(年金)</label>

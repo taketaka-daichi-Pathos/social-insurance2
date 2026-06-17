@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>従業員マイページ - 労務システム</title>
+  <style>
+    body {
+      font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif;
+      background-color: #f4f6f8;
+      margin: 0; padding: 0; color: #333;
+    }
+    .navbar {
+      background-color: #0056b3; color: white; padding: 15px 20px;
+      display: flex; justify-content: space-between; align-items: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .navbar h1 { margin: 0; font-size: 18px; }
+    .btn-logout {
+      background: rgba(255,255,255,0.2); color: white; border: 1px solid white;
+      padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
+    }
+    
+    .container {
+      max-width: 1200px; /* 横幅を少し広げました！ */
+      margin: 30px auto; padding: 0 20px;
+    }
+    .welcome-card {
+      background: white; padding: 20px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 20px;
+      border-left: 5px solid #28a745;
+    }
+    .welcome-card h2 { margin: 0 0 10px 0; color: #333; }
+
+    /* 🌟 ここが3列レイアウトの魔法！Gridシステムを導入 */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+      align-items: start; /* 上揃えにする */
+    }
+
+    .slip-card {
+      background: white; padding: 20px; border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      height: 100%; /* 高さを揃える */
+      box-sizing: border-box;
+    }
+    .slip-card h3 {
+      margin-top: 0; border-bottom: 2px solid #f0f2f5; padding-bottom: 10px;
+      font-size: 16px;
+    }
+    .slip-list-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 15px 0; border-bottom: 1px solid #eee;
+    }
+    .slip-list-item:last-child { border-bottom: none; }
+    .btn-view-slip {
+      background: #0056b3; color: white; border: none; padding: 6px 12px;
+      border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;
+    }
+    
+    /* 申請ボタンのスタイル調整（縦並びに変更） */
+    .apply-btn {
+      display: block; width: 100%; padding: 12px 15px; background: #f8f9fa;
+      border: 1px solid #ced4da; border-radius: 6px; cursor: pointer;
+      text-align: left; margin-bottom: 10px; box-sizing: border-box;
+      transition: background 0.2s;
+    }
+    .apply-btn:hover { background: #e9ecef; }
+    .apply-btn strong { color: #0056b3; display: block; margin-bottom: 3px; font-size: 14px;}
+    .apply-btn span { font-size: 11px; color: #666; }
+
+/* 🌟 追加：通知リスト用の美しく細いスクロールバー */
+.custom-scrollbar::-webkit-scrollbar {
+        width: 6px; /* スクロールバーの細さ */
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: #f8f9fa; /* レールの色 */
+        border-radius: 10px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #ced4da; /* つまみの色 */
+        border-radius: 10px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #adb5bd; /* マウスオーバーで少し濃くする */
+      }
+
+  </style>
+  <script type="module" crossorigin src="/assets/employeeDashboard-5c3IgG7o.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/firebase-fZpoUYB4.js">
+</head>
+<body>
+
+  <header class="navbar">
+    <h1>👑 従業員マイページ</h1>
+    <button id="btn-logout" class="btn-logout">ログアウト</button>
+  </header>
+
+  <div class="container">
+    <div class="welcome-card">
+      <h2 id="user-greeting">読み込み中...</h2>
+      <p style="margin: 0; color: #666; font-size: 14px;">ここから各種申請が行えます。</p>
+    </div>
+
+    <!-- 🌟 Gridコンテナ（この中のカードが横に3つ並びます） -->
+    <div class="dashboard-grid">
+      
+      <!-- 1列目：お知らせ -->
+      <div class="slip-card" style="border-top: 4px solid #ffc107;">
+        <h3 style="color: #b08d00;">🔔 労務担当からの通知</h3>
+        <div id="remand-banner-area"></div>
+        <div id="notification-list" class="custom-scrollbar" style="max-height: 500px; overflow-y: auto; padding-right: 8px;">
+          <p style="color: #888; font-size: 13px;">通知データを読み込み中...</p>
+        </div>
+      </div>
+
+      <!-- 2列目：給与明細 -->
+      <!-- <div class="slip-card" style="border-top: 4px solid #0056b3;">
+        <h3 style="color: #0056b3;">📄 あなたの給与明細</h3>
+        <div id="my-payslips-list">
+          <p style="color: #888; font-size: 13px;">給与明細データを読み込み中...</p>
+        </div>
+      </div> -->
+
+      <!-- 3列目：各種申請 -->
+      <div class="slip-card" style="border-top: 4px solid #28a745;">
+        <h3 style="color: #15803d;">🔄 ライフイベント申請・各種登録</h3>
+        <p style="font-size: 12px; color: #666; margin-bottom: 15px;">ライフスタイルに変化があった場合はここから申請してください。</p>
+        
+        <button id="btn-apply-family" class="apply-btn">
+          <strong>👪 家族情報の変更・扶養追加・扶養喪失
+          </strong>
+          <span>結婚・出産・就職などによる扶養の増減</span>
+        </button>
+
+        <button id="btn-apply-profile" class="apply-btn">
+          <strong>🏠 住所・氏名の変更</strong>
+          <span>引っ越しや改姓による手続き</span>
+        </button>
+
+        <button id="btn-apply-lost" class="apply-btn">
+          <strong>⚠️ 保険証の紛失・き損</strong>
+          <span>再発行の手続き（警察への届出が必要です）</span>
+        </button>
+
+        <!-- 🌟 ① 個人情報登録ボタン（クリックでモーダルを開く） -->
+        <div id="btn-open-personal-info" style="cursor: pointer; padding: 12px 16px; background: #ffffff; border-radius: 8px; border: 1px solid #d1d5db; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 20px; transition: 0.2s; display: flex; align-items: center; gap: 12px;" onmouseover="this.style.background='#f9fafb'; this.style.borderColor='#9ca3af'" onmouseout="this.style.background='#ffffff'; this.style.borderColor='#d1d5db'">
+          <div style="font-size: 22px; line-height: 1;">🔐</div>
+          <div style="text-align: left;">
+            <h3 style="margin: 0; color: #374151; font-size: 14px;">個人情報（マイナンバー等）の登録・更新</h3>
+            <p style="margin: 3px 0 0; font-size: 11px; color: #6b7280;">行政手続きに必要な情報の変更・加筆はこちら</p>
+          </div>
+        </div>
+
+      </div>
+
+
+
+        <!-- 🌟 ② モーダル本体（最初は display: none で隠しておく） -->
+        <div id="modal-personal-info" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 9999; justify-content: center; align-items: center; backdrop-filter: blur(3px);">
+          <div style="background: #fff; padding: 30px; border-radius: 12px; width: 400px; max-width: 90%; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+            <h3 style="margin-top: 0; border-bottom: 2px solid #0d47a1; padding-bottom: 10px; color: #333; font-size: 18px;">個人情報の登録・更新</h3>
+            <p style="font-size: 12px; color: #666; margin-bottom: 20px; line-height: 1.5;">行政手続き（e-Gov連携等）に必要な情報を入力してください。<br>※入力された情報は暗号化され、安全に労務担当者へ送信されます。</p>
+            
+            <div style="margin-bottom: 15px;">
+              <label style="display: block; font-weight: bold; font-size: 13px; margin-bottom: 5px; color: #333;">基礎年金番号（10桁の数字）</label>
+              <input type="text" id="input-emp-pension" class="strict-number" inputmode="numeric" placeholder="例: 1234567890" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
+            </div>
+
+            <div style="margin-bottom: 25px;">
+              <label style="display: block; font-weight: bold; font-size: 13px; margin-bottom: 5px; color: #333;">マイナンバー（個人番号：12桁の数字）</label>
+              <input type="text" id="input-emp-mynumber" class="strict-number" inputmode="numeric" placeholder="例: 123412341234" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
+            </div>
+
+            <div style="margin-bottom: 25px; border: 1px solid #e0e0e0; padding: 15px; border-radius: 8px; background: #f8f9fa;">
+      
+              <label style="display: block; font-weight: bold; font-size: 13px; margin-bottom: 8px; color: #333;">加入している健康保険の種類</label>
+              <select id="select-health-type" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; margin-bottom: 15px; background: #fff;">
+                <option value="kyokai">協会けんぽ（記号は数字のみ）</option>
+                <option value="kumiai">組合健保（記号に漢字やカナを含む）</option>
+              </select>
+        
+              <div style="display: flex; gap: 10px;">
+                <div style="flex: 1;">
+                  <label style="display: block; font-weight: bold; font-size: 13px; margin-bottom: 5px; color: #333;">健康保険 記号</label>
+                  <input type="text" id="input-emp-health-symbol" placeholder="例: 12345678" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
+                  <p id="hint-health-symbol" style="margin: 5px 0 0; font-size: 11px; color: #d32f2f; font-weight: bold;">※数字のみ入力</p>
+                </div>
+                <div style="flex: 1;">
+                  <label style="display: block; font-weight: bold; font-size: 13px; margin-bottom: 5px; color: #333;">健康保険 番号</label>
+                  <input type="text" id="input-emp-health-number" class="strict-number" inputmode="numeric" placeholder="例: 56789" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
+                  <p style="margin: 5px 0 0; font-size: 11px; color: #666;">※数字のみ</p>
+                </div>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; gap: 10px;">
+              <button id="btn-close-personal-info" style="flex: 1; padding: 12px 0; background: #f8f9fa; border: 1px solid #ccc; border-radius: 6px; cursor: pointer; color: #333; font-weight: bold;">キャンセル</button>
+              <button id="btn-save-personal-info" style="flex: 1; padding: 12px 0; background: #0d47a1; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">保存して送信</button>
+            </div>
+          </div>
+        </div>
+
+
+    </div> <!-- Gridコンテナ終了 -->
+
+    <div style="text-align: right; margin-top: 30px;">
+      <a href="#" id="btn-open-resignation" style="color: #6c757d; font-size: 12px; text-decoration: underline;">退職をご検討・予定されている方はこちら（退職ウィザード）</a>
+    </div>
+
+  </div>
+
+
+
+<!-- 🌟 住所・氏名変更 申請モーダル -->
+<div id="modal-address-name-change" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+  <div style="background: white; padding: 30px; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+    <h3 style="margin-top: 0; color: #333; border-bottom: 2px solid #0056b3; padding-bottom: 10px;">🏠 住所・氏名の変更申請</h3>
+    
+    <div style="margin-bottom: 15px;">
+      <label>変更発生日（引っ越し日・入籍日など） <span style="color: red;">*</span></label>
+      <input type="date" id="input-change-date" style="width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ccc; border-radius: 4px;">
+    </div>
+
+    <div style="margin-bottom: 15px;">
+      <label>新しい氏名（※変更がある場合のみ）</label>
+      <div style="display: flex; gap: 10px; margin-top: 5px;">
+        <input type="text" id="input-new-lastname" placeholder="新・姓 (例: 山田)" style="width: 50%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+        <input type="text" id="input-new-firstname" placeholder="新・名 (例: 花子)" style="width: 50%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+      </div>
+    </div>
+
+<!-- 🌟 新住所（郵便番号を独立させる） -->
+<div style="margin-bottom: 20px;">
+  <label style="font-weight: bold; color: #333;">新しい住所（※変更がある場合のみ）</label>
+  <div style="display: flex; gap: 10px; margin-top: 5px;">
+    <!-- 郵便番号用の小さな箱 -->
+    <input type="text" id="input-new-zip" placeholder="〒 (例: 106-0032)" style="width: 35%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+    <!-- 住所本体の大きな箱 -->
+    <input type="text" id="input-new-address" placeholder="住所 (例: 東京都港区〇〇 1-2-3)" style="width: 65%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+  </div>
+</div>
+
+
+<!-- 🌟 通勤経路と定期代（実務のバグを防ぐ神仕様） -->
+<div style="margin-bottom: 20px; background: #f8f9fa; padding: 15px; border-radius: 5px; border: 1px solid #e9ecef;">
+  <label style="color: #d9534f; font-weight: bold; display:block; margin-bottom: 8px;">🚃 新しい通勤経路（※住所変更時必須）</label>
+  
+  <div style="margin-bottom: 10px;">
+    <input type="text" id="input-new-route" placeholder="通勤経路 (例: 自宅〜JR〇〇駅〜地下鉄〇〇駅〜会社)" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+  </div>
+  
+  <div style="display: flex; gap: 10px; align-items: center;">
+    <span style="font-size: 14px; color: #555;">1ヶ月の定期代：</span>
+    <input type="number" id="input-new-pass" placeholder="例: 12000" style="width: 40%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+    <span style="font-size: 14px; color: #555;">円</span>
+  </div>
+  <p style="margin: 5px 0 0 0; font-size: 11px; color: #888;">※片道ではなく、1ヶ月分の定期券（または見込み額）を入力してください。</p>
+</div>
+
+    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+      <button id="btn-close-change-modal" style="padding: 8px 15px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">キャンセル</button>
+      <button id="btn-submit-change" style="padding: 8px 15px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer;">申請する</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 🌟 保険証の紛失・き損（再発行申請） -->
+<div id="modal-reissue-insurance" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
+  <div style="background: white; padding: 30px; border-radius: 8px; width: 90%; max-width: 500px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+      
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+          <h3 style="margin: 0; color: #333;">💳 保険証の紛失・き損（再発行申請）</h3>
+          <button type="button" onclick="document.getElementById('modal-reissue-insurance').style.display='none'" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #888;">×</button>
+      </div>
+
+      <p style="margin-bottom: 20px; color: #555;">健康保険証の再発行手続きを行います。状況を選択してください。</p>
+
+      <form id="form-reissue-insurance">
+        <div style="margin-bottom: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold;">申請の理由 <span style="color: white; background: #e3342f; padding: 2px 6px; border-radius: 4px; font-size: 12px; margin-left: 5px;">必須</span></label>
+            <select id="reissue-reason" required style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">
+                <option value="">選択してください</option>
+                <option value="紛失">紛失（外出先で落とした等）</option>
+                <option value="盗難">盗難</option>
+                <option value="き損">き損（破れた・割れた・汚れた等）</option>
+            </select>
+        </div>
+    
+        <div style="margin-bottom: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold;">事象発生日（おおよそで可） <span style="color: white; background: #e3342f; padding: 2px 6px; border-radius: 4px; font-size: 12px; margin-left: 5px;">必須</span></label>
+            <input type="date" id="reissue-date" required style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">
+        </div>
+    
+        <div id="police-report-section" style="display: none; background-color: #fff3cd; padding: 15px; border-radius: 4px; margin-bottom: 15px; border-left: 4px solid #ffeeba;">
+            <label style="color: #856404; display: block; margin-bottom: 10px; font-size: 14px; font-weight: bold;">💡 紛失・盗難の場合は、悪用を防ぐため速やかに警察へ届け出てください。</label>
+            <label style="display: block; margin-bottom: 5px; font-size: 14px;">警察への届け出状況</label>
+            <select id="reissue-police" style="width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <option value="届け出済み">届け出済み</option>
+                <option value="未届け（これから行う）">未届け（これから行う）</option>
+            </select>
+        </div>
+    
+        <div id="broken-card-section" style="display: none; background-color: #d4edda; padding: 15px; border-radius: 4px; margin-bottom: 15px; border-left: 4px solid #c3e6cb;">
+            <label style="color: #155724; font-size: 14px; font-weight: bold;">💡 き損の場合、今の保険証は新しいものが届いた際に会社へ返却が必要です。破棄しないでください。</label>
+        </div>
+    
+        <div style="margin-bottom: 25px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold;">備考・詳細な状況（任意）</label>
+            <textarea id="reissue-memo" rows="3" placeholder="例：通勤途中に財布ごと紛失した等" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 4px;"></textarea>
+        </div>
+    
+        <div style="text-align: right;">
+            <button type="button" onclick="document.getElementById('modal-reissue-insurance').style.display='none'" style="padding: 10px 20px; margin-right: 10px; border: 1px solid #ccc; background: white; border-radius: 4px; cursor: pointer;">キャンセル</button>
+            <button type="submit" style="padding: 10px 20px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">申請する</button>
+        </div>
+    </form>
+  </div>
+</div>
+
+
+<!-- 🚪 退社ウィザード -->
+<div id="modal-resignation" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; overflow-y: auto;">
+  <div style="background: white; padding: 30px; border-radius: 8px; width: 90%; max-width: 600px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); margin: 20px auto;">
+      
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+          <h3 style="margin: 0; color: #d32f2f;">🚪 退社手続き（資格喪失）</h3>
+          <button type="button" onclick="document.getElementById('modal-resignation').style.display='none'" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #888;">×</button>
+      </div>
+
+      <p style="margin-bottom: 20px; color: #555;">退社に向けた公的な手続き（社会保険の資格喪失等）に必要な情報を入力してください。</p>
+
+      <form id="form-resignation">
+        <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 6px; background-color: #fafafa;">
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">退職予定日 <span style="color: white; background: #e3342f; padding: 2px 6px; border-radius: 4px; font-size: 12px; margin-left: 5px;">必須</span></label>
+          <input type="date" id="resignation-date" required style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">
+          <p style="font-size: 12px; color: #666; margin-top: 5px;">※退職日の翌日が「資格喪失日」となります。</p>
+      </div>
+
+          <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 6px; background-color: #fafafa;">
+              <label style="display: block; margin-bottom: 10px; font-weight: bold;">健康保険証の返却 <span style="color: white; background: #e3342f; padding: 2px 6px; border-radius: 4px; font-size: 12px; margin-left: 5px;">必須</span></label>
+              <p style="font-size: 13px; color: #d32f2f; margin-bottom: 10px;">退職日以降、今の保険証は使用できません。速やかに会社へ返却してください。（扶養家族分も含む）</p>
+              <select id="insurance-return-status" required style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">
+                  <option value="">選択してください</option>
+                  <option value="最終出社日に直接手渡しする">最終出社日に直接手渡しする</option>
+                  <option value="退職日以降に郵送で返却する">退職日以降に郵送で返却する</option>
+                  <option value="紛失しており返却できない">紛失しており返却できない（※別途届出が必要です）</option>
+              </select>
+          </div>
+
+          <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 6px; background-color: #fafafa;">
+              <label style="display: block; margin-bottom: 10px; font-weight: bold;">雇用保険 離職票の発行 <span style="color: white; background: #e3342f; padding: 2px 6px; border-radius: 4px; font-size: 12px; margin-left: 5px;">必須</span></label>
+              <p style="font-size: 13px; color: #555; margin-bottom: 10px;">失業保険（基本手当）の受給を希望する場合は「必要」を選択してください。次の就職先が決まっている場合は原則不要です。</p>
+              <div style="display: flex; gap: 20px;">
+                  <label><input type="radio" name="unemployment-slip" value="必要" required> 必要</label>
+                  <label><input type="radio" name="unemployment-slip" value="不要"> 不要</label>
+              </div>
+          </div>
+
+          <div style="text-align: right; margin-top: 30px;">
+              <button type="button" onclick="document.getElementById('modal-resignation').style.display='none'" style="padding: 10px 20px; margin-right: 10px; border: 1px solid #ccc; background: white; border-radius: 4px; cursor: pointer;">キャンセル</button>
+              <button type="submit" style="padding: 10px 20px; background: #d32f2f; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">退社手続きを申請する</button>
+          </div>
+      </form>
+  </div>
+</div>
+
+
+
+<!-- 🌟 家族情報の変更・ライフイベント申請モーダル -->
+<div id="modal-life-event-family" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; justify-content: center; align-items: center;">
+  <div style="background: white; width: 90%; max-width: 650px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); display: flex; flex-direction: column; max-height: 90vh;">
+    
+    <div style="padding: 16px 24px; background: #0056b3; color: white; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center;">
+      <h3 style="margin: 0; font-size: 16px;">👨‍👩‍👧 家族情報の変更・ライフイベント申請</h3>
+      <button id="btn-close-family-modal" style="background: none; border: none; color: white; font-size: 20px; cursor: pointer;">✖</button>
+    </div>
+
+    <div style="padding: 24px; overflow-y: auto;">
+
+      <div style="margin-bottom: 20px; background: #f0f8ff; padding: 15px; border-radius: 8px; border: 1px solid #b8daff;">
+        <h4 style="margin-top: 0; margin-bottom: 10px; color: #0056b3; font-size: 14px;">👨‍👩‍👧‍👦 現在登録されているご家族</h4>
+        <div id="modal-current-family-list">
+          <p style="color: #666; font-size: 13px; margin: 0;">データを読み込み中...</p>
+        </div>
+      </div>
+
+      <label style="font-weight: bold; color: #333; font-size: 15px;">どのような変更ですか？</label>
+      <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 12px; background: #f8f9fa; padding: 16px; border-radius: 8px; border: 1px solid #dee2e6;">
+        <label style="cursor: pointer;"><input type="radio" name="family-event-type" value="birth" checked> 👶 赤ちゃんが産まれる（産休・育休の申請）</label>
+        <label style="cursor: pointer;"><input type="radio" name="family-event-type" value="marriage"> 💍 結婚した・配偶者を扶養に入れる</label>
+        <label style="cursor: pointer;"><input type="radio" name="family-event-type" value="other"> 🏫 子どもや親を新たに扶養に入れる</label>
+        <label style="cursor: pointer;"><input type="radio" name="family-event-type" value="reinstatement"> 🔙 復職（育休の終了）</label>
+        <label style="cursor: pointer;"><input type="radio" name="family-event-type" value="remove_family"> 👋 家族を扶養から外す（就職・収入超過・離婚など）</label>
+      </div>
+
+      <div id="form-reinstatement-section" style="display: none; margin-top: 15px;">
+        <label style="font-weight: bold;">復職予定日</label>
+        <input type="date" id="input-reinstatement-date" style="width: 100%; padding: 8px;">
+
+        <div style="background: #f0f8ff; padding: 10px; border-radius: 5px; margin-top: 10px;">
+          <p style="margin: 0 0 5px 0; font-size: 0.9em; font-weight: bold; color: #333;">👶 養育特例（年金維持）の申請情報</p>
+          <label style="font-size: 0.85em;">お子様の氏名</label>
+          <input type="text" id="input-child-name" placeholder="例：山田 太郎" style="width: 100%; padding: 6px; margin-bottom: 5px; box-sizing: border-box;">
+          <label style="font-size: 0.85em;">お子様の生年月日</label>
+          <input type="date" id="input-child-dob" style="width: 100%; padding: 6px; box-sizing: border-box;">
+        </div>
+      </div>
+
+      <div id="form-family-section" style="display: none; margin-top: 20px; background: #e3f2fd; padding: 20px; border-radius: 8px; border: 2px solid #90caf9;">
+        <h4 style="margin-top: 0; margin-bottom: 15px; color: #0d47a1; font-size: 15px;">👨‍👩‍👧‍👦 追加するご家族（被扶養者）の情報</h4>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">氏名（漢字）- 姓</label>
+            <input type="text" id="dep-last-name-kanji" placeholder="例：山田" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+          </div>
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">氏名（漢字）- 名</label>
+            <input type="text" id="dep-first-name-kanji" placeholder="例：花子" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">氏名（フリガナ）- セイ</label>
+            <input type="text" id="dep-last-name-kana" placeholder="例：ヤマダ" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+          </div>
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">氏名（フリガナ）- メイ</label>
+            <input type="text" id="dep-first-name-kana" placeholder="例：ハナコ" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">生年月日</label>
+            <input type="date" id="dep-birth" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+          </div>
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">続柄</label>
+            <select id="dep-relation" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+              <option value="">選択してください</option>
+              <option value="配偶者">配偶者</option>
+              <option value="子">子</option>
+              <option value="父">父</option>
+              <option value="母">母</option>
+              <option value="その他">その他</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">年間収入見込額</label>
+            <input type="number" id="dep-income" placeholder="例: 1000000" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+          </div>
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">同居 / 別居</label>
+            <select id="dep-living" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+              <option value="同居">同居</option>
+              <option value="別居">別居</option>
+            </select>
+          </div>
+        </div> <div style="margin-top: 12px;">
+          <label style="font-size: 12px; font-weight: bold; color: #333;">現在の状況（職業等） ★重要</label>
+          <select id="dep-status" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+            <option value="">選択してください</option>
+            <option value="16歳以上の学生">16歳以上の学生</option>
+            <option value="直近で退職/失業保険終了">直近で退職 / 失業保険の受給終了</option>
+            <option value="継続して無職/パート">継続して無職 / パートタイム収入のみ</option>
+            <option value="年金受給者">年金受給者</option>
+            <option value="その他">その他（16歳未満の子どもなど）</option>
+          </select>
+        </div>
+
+        <div id="doc-nav-area" style="display: none; margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px dashed #ffeeba; border-radius: 5px;">
+        <h4 style="margin: 0 0 10px 0; color: #856404; font-size: 14px;">📌 ご入力の状況から、以下の証明書類が必要です</h4>
+        <div id="doc-upload-container" style="display: flex; flex-direction: column; gap: 10px;"></div>
+        </div>
+
+      </div>
+
+
+      <div id="form-family-remove-section" style="display: none; margin-top: 20px; background: #ffebee; padding: 20px; border-radius: 8px; border: 2px solid #ef9a9a;">
+        <h4 style="margin-top: 0; margin-bottom: 15px; color: #c62828; font-size: 15px;">👋 扶養から外すご家族の情報</h4>
+        
+        <div style="margin-bottom: 12px;">
+          <label style="font-size: 12px; font-weight: bold; color: #333;">対象のご家族</label>
+          <select id="remove-dep-select" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+            <option value="">対象者を選択してください</option>
+          </select>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">扶養から外す理由</label>
+            <select id="remove-dep-reason" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+              <option value="">選択してください</option>
+              <option value="就職（新しい会社の保険に加入）">就職（新しい会社の保険に加入）</option>
+              <option value="収入超過（パート等の収入増）">収入超過（パート等の収入増）</option>
+              <option value="離婚">離婚</option>
+              <option value="死亡">死亡</option>
+              <option value="その他">その他</option>
+            </select>
+          </div>
+          <div style="flex: 1;">
+            <label style="font-size: 12px; font-weight: bold; color: #333;">喪失年月日（外れる日）</label>
+            <input type="date" id="remove-dep-date" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+          </div>
+        </div> <div style="margin-top: 12px; background: #fff; padding: 12px; border-radius: 4px; border: 1px solid #ffc107;">
+          <label style="font-size: 12px; font-weight: bold; color: #856404;">⚠️ 健康保険証の返却について（必須）</label>
+          <p style="font-size: 11px; color: #666; margin: 4px 0;">扶養から外れる方の保険証は、会社への返却が法律で義務付けられています。</p>
+          <select id="remove-dep-card-return" style="width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+            <option value="">現在の状況を選択してください</option>
+            <option value="後日、会社に郵送・手渡しする">手元にある（後日、会社に郵送または手渡しする）</option>
+            <option value="紛失した（滅失届が必要）">紛失してしまった（追加の手続きが必要です）</option>
+            <option value="すでに会社に提出済み">すでに会社に提出済み</option>
+          </select>
+        </div>
+
+        <div id="remove-doc-nav-area" style="display: none; margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px dashed #ffeeba; border-radius: 5px;">
+          <h4 style="margin: 0 0 10px 0; color: #856404; font-size: 14px;">📌 ご入力の状況から、以下の証明書類が必要です</h4>
+          <div id="remove-doc-upload-container" style="display: flex; flex-direction: column; gap: 10px;"></div>
+        </div>
+      </div>
+
+
+      <div id="form-birth-section" style="margin-top: 20px; background: #fff8e1; padding: 20px; border-radius: 8px; border: 2px solid #ffe082;">
+        <label style="font-weight: bold; color: #d84315;">📅 出産予定日（または出産日）を入力してください</label>
+        <input type="date" id="input-birth-date" style="width: 100%; padding: 10px; margin-top: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 16px;">
+
+        <div style="margin-top: 10px;">
+          <label style="font-size: 0.85em; color: #333; font-weight: bold;">休業開始日（産休・育休に入る日）</label>
+          <input type="date" id="input-leave-start" style="width: 100%; padding: 8px; margin-bottom: 5px; box-sizing: border-box;">
+          
+          <label style="font-size: 0.85em; color: #333; font-weight: bold;">休業終了予定日（職場に復帰する予定日）</label>
+          <input type="date" id="input-leave-end" style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+
+        <div style="margin-top: 20px;">
+          <label style="font-weight: bold; color: #d84315; font-size: 14px;">✅ 会社に手続きを依頼するサポート（ご希望の項目にチェック）</label>
+          <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; color: #333;">
+            <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="allowance" checked> 💰 産休中のお給料の代わり（出産手当金）を申請する</label>
+            <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="exemption" checked> 🆓 育休産休中の社会保険料を「タダ」にする手続きを会社に任せる</label>
+            <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="hellowork" checked> 🏢 ハローワークからの育休手当（育児休業給付金）を申請する</label>
+            <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="monthly_change" checked> 🛡️ 復帰後、時短勤務で給料が下がる場合、保険料を安くして手取りを守る特例を申請する</label>
+            <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="pension_special" checked> 👴 上記で保険料を安くしても、将来の年金が減らないようにする特例を申請する</label>
+
+          </div>
+          <p style="margin-top: 10px; font-size: 11px; color: #666;">※チェックを入れると、担当の労務に必要な手続きタスクが自動で通知されます。</p>
+        </div>
+      </div>
+    </div>
+
+    <div style="padding: 16px 24px; background: #f8f9fa; border-top: 1px solid #dee2e6; display: flex; justify-content: flex-end; gap: 12px; border-radius: 0 0 8px 8px;">
+      <button id="btn-cancel-family-modal" style="padding: 10px 20px; background: #e9ecef; border: none; border-radius: 4px; cursor: pointer; color: #555; font-weight: bold;">キャンセル</button>
+      <button id="btn-submit-family-event" style="padding: 10px 24px; background: #28a745; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">🚀 この内容で労務に申請する</button>
+    </div>
+  </div>
+</div>
+
+
+</body>
+
+</html>

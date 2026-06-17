@@ -1,0 +1,112 @@
+<div style="padding: 20px; width: 100%; box-sizing: border-box; height: 100%; display: flex; gap: 25px; align-items: flex-start;">
+  
+    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+      
+        <div style="margin-bottom: 20px; border-bottom: 2px solid #e9ecef; padding-bottom: 15px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h3 style="color: #333; margin: 0;">✅ タスク集中管理（カンバン）</h3>
+                <div style="display: flex; gap: 10px;">
+                  <button id="btn-bulk-notify" style="background: #ffc107; color: #333; border: none; padding: 6px 15px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1); white-space: nowrap;">📣 選択した対象者へ通知</button>
+                  <button id="btn-export-csv" style="background: #0056b3; color: #fff; border: none; padding: 6px 15px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1); white-space: nowrap;">⬇️ 選択したタスクをCSV出力</button> 
+                  <button id="btn-show-archive" style="background: #6c757d; color: #fff; border: none; padding: 6px 15px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1); white-space: nowrap;">📂 アーカイブ一覧</button>
+                </div>
+              </div>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <!-- <button id="btn-select-all" style="background: #e9ecef; color: #333; border: 1px solid #ccc; padding: 6px 15px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; white-space: nowrap; margin-right: 10px;">☑️ 全選択 / 解除</button>
+     -->
+                <button class="filter-btn active" data-filter="all" style="background: #333; color: #fff; border: none; padding: 6px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;">すべて</button>
+                <button class="filter-btn" data-filter="年金事務所" style="background: #e9ecef; color: #333; border: none; padding: 6px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;">🏢 年金事務所</button>
+                <button class="filter-btn" data-filter="ハローワーク" style="background: #e9ecef; color: #333; border: none; padding: 6px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;">🏢 ハロワ</button>
+                <button class="filter-btn" data-filter="社内" style="background: #e9ecef; color: #333; border: none; padding: 6px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;">🏠 社内処理</button>
+              </div>
+              <select id="sort-select" style="padding: 6px 12px; border-radius: 4px; border: 1px solid #ccc; font-size: 12px; font-weight: bold; color: #333; cursor: pointer; background: #f8f9fa;">
+                <option value="deadline">📅 期限が近い順</option>
+                <option value="newest">✨ 新着タスク順</option>
+              </select>
+            </div>
+          </div>
+  
+          <div style="display: flex; gap: 20px; width: 100%; padding-bottom: 10px;">
+        
+            <div style="flex: 1; min-width: 260px; background: #f8f9fa; border-radius: 8px; padding: 15px; border-top: 4px solid #dc3545;">
+              <h4 style="margin-top: 0; margin-bottom: 15px; color: #333; display: flex; justify-content: space-between; align-items: center;">
+                <span>未着手 <span id="count-todo" style="background: #e9ecef; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin-left: 5px;">0</span></span>
+                <label style="font-size: 11px; cursor: pointer; margin-right: 10px; font-weight: bold; color: #555;">
+                  <input type="checkbox" class="select-all-cb" onchange="toggleAllTasks(this)" data-target="todo"> 全選択/解除
+              </label>
+                <button id="btn-bulk-doing" style="background: #ffc107; color: #fff; border: none; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; transition: 0.2s;">▶️ 進行中へ</button>
+              </h4>
+              <div id="list-todo" style="display: flex; flex-direction: column; gap: 15px; overflow-y: auto; max-height: 65vh; padding-right: 5px;"></div>
+            </div>
+            
+            <div style="flex: 1; min-width: 260px; background: #f8f9fa; border-radius: 8px; padding: 15px; border-top: 4px solid #ffc107;">
+              <h4 style="margin-top: 0; margin-bottom: 15px; color: #333; display: flex; justify-content: space-between; align-items: center;">
+                <span>進行中 <span id="count-doing" style="background: #e9ecef; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin-left: 5px;">0</span></span>
+                <label style="font-size: 11px; cursor: pointer; margin-right: 10px; font-weight: bold; color: #555;">
+                  <input type="checkbox" class="select-all-cb" onchange="toggleAllTasks(this)" data-target="doing"> 全選択/解除
+              </label>
+                <button id="btn-bulk-done" style="background: #28a745; color: #fff; border: none; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; transition: 0.2s;">✅ 完了へ</button>
+              </h4>
+              <div id="list-doing" style="display: flex; flex-direction: column; gap: 15px; overflow-y: auto; max-height: 65vh; padding-right: 5px;"></div>
+            </div>
+            
+            <div style="flex: 1; min-width: 260px; background: #f8f9fa; border-radius: 8px; padding: 15px; border-top: 4px solid #28a745;">
+              <h4 style="margin-top: 0; margin-bottom: 15px; color: #333; display: flex; justify-content: space-between; align-items: center;">
+                <span>完了 <span id="count-done" style="background: #e9ecef; padding: 2px 8px; border-radius: 12px; font-size: 12px; margin-left: 5px;">0</span></span>
+                <div style="display: flex; gap: 5px;">
+                  <label style="font-size: 11px; cursor: pointer; margin-right: 10px; font-weight: bold; color: #555;">
+                    <input type="checkbox" class="select-all-cb" onchange="toggleAllTasks(this)" data-target="done"> 全選択/解除
+                </label>
+                  <button id="btn-bulk-revert" style="background: #ffc107; color: #333; border: none; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; transition: 0.2s;">戻す</button>
+                  <button id="btn-archive-all" style="background: #6c757d; color: #fff; border: none; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer;">アーカイブ</button>
+                </div>
+              </h4>
+              <div id="list-done" style="display: flex; flex-direction: column; gap: 15px; overflow-y: auto; max-height: 65vh; padding-right: 5px;"></div>
+            </div>
+            
+          </div>
+
+    </div>
+  
+    <div style="width: 280px; flex-shrink: 0;">
+      <div id="urgent-tasks-widget" style="background: #fff; border: 2px solid #dc3545; border-radius: 8px; padding: 15px; box-shadow: 0 4px 10px rgba(220,53,69,0.15); position: sticky; top: 20px;">
+        <div style="font-weight: bold; color: #dc3545; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ffeeba; padding-bottom: 8px;">
+          <span style="font-size: 14px;">🚨 期限切迫・超過</span>
+          <span id="urgent-count" style="background: #dc3545; color: #fff; padding: 2px 8px; border-radius: 12px; font-size: 12px;">0件</span>
+        </div>
+        <div id="urgent-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+      </div>
+    </div>
+  
+    <div id="archive-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; justify-content: center; align-items: center;">
+      <div style="background: #fff; width: 800px; max-height: 80vh; border-radius: 8px; padding: 20px 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); display: flex; flex-direction: column;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bottom: 20px;">
+          <h3 style="margin: 0; color: #333;">📦 アーカイブされたタスク一覧</h3>
+          <div style="display: flex; gap: 15px; align-items: center;">
+            <button id="btn-empty-archive" style="background: #fff; color: #dc3545; border: 1px solid #dc3545; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer;">🗑️ アーカイブを全て完全削除</button>
+            <button id="btn-close-archive" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #999;">×</button>
+          </div>
+        </div>
+        <div id="archive-list" style="overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px;">
+          </div>
+      </div>
+    </div>
+  
+    <div id="memo-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1100; justify-content: center; align-items: center;">
+        <div style="background: #fff; width: 400px; border-radius: 8px; padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+          <h3 style="margin-top: 0; color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px;">📝 タスクメモ</h3>
+          <p id="memo-task-title" style="font-size: 12px; color: #0056b3; font-weight: bold; margin-bottom: 15px;"></p>
+          <textarea id="memo-textarea" style="width: 100%; height: 120px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; resize: none; font-size: 13px;" placeholder="タスクに関するメモや進捗（例：〇〇へ郵送済み）を入力してください..."></textarea>
+          <input type="hidden" id="memo-task-id">
+          <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+            <button id="btn-close-memo" style="background: #e9ecef; color: #333; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">キャンセル</button>
+            <button id="btn-save-memo" style="background: #0056b3; color: #fff; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px;">保存する</button>
+          </div>
+        </div>
+      </div>
+
+
+
+  </div>

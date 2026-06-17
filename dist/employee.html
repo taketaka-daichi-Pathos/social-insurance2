@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>入社時基本情報入力ウィザード</title>
+  <style>
+    body { font-family: sans-serif; background-color: #f4f6f9; display: flex; justify-content: center; padding: 40px 0; margin: 0; }
+    .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 700px; }
+    h2 { margin-top: 0; color: #28a745; font-size: 22px; border-bottom: 2px solid #e9ecef; padding-bottom: 10px; }
+    .section-title { font-size: 16px; color: #0056b3; margin: 32px 0 16px; padding-left: 8px; border-left: 4px solid #0056b3; font-weight: bold; }
+    .form-group { margin-bottom: 16px; background: #fafafa; padding: 14px; border-radius: 6px; border: 1px solid #eee; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; color: #333; font-weight: bold; }
+    input[type="text"], input[type="date"], input[type="password"], input[type="number"], select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; margin-top: 4px; }
+    input[type="file"] { font-size: 13px; margin-top: 6px; }
+    .help-text { font-size: 11px; color: #666; margin-top: 4px; line-height: 1.5; }
+    .radio-group, .checkbox-group { display: flex; gap: 16px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+    .radio-group label, .checkbox-group label { font-weight: normal; margin: 0; cursor: pointer; }
+    .hidden { display: none !important; }
+    
+    .doc-nav { background: #e3f2fd; border: 2px dashed #0056b3; padding: 16px; border-radius: 8px; margin-top: 20px; }
+    .doc-nav h4 { margin: 0 0 10px 0; color: #0056b3; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+    button { width: 100%; padding: 14px; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+    .btn-submit { background-color: #28a745; color: white; margin-top: 32px; box-shadow: 0 2px 4px rgba(40,167,69,0.3); }
+    .btn-submit:hover { background-color: #218838; }
+    .btn-logout { background-color: transparent; color: #6c757d; font-size: 13px; padding: 8px; border: 1px solid #ccc; margin-top: 20px; }
+    #msg { font-size: 14px; margin-top: 16px; padding: 12px; border-radius: 4px; display: none; font-weight: bold; text-align: center; }
+  </style>
+  <script type="module" crossorigin src="/assets/employee-Cj8gfg08.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/firebase-fZpoUYB4.js">
+</head>
+<body>
+  <div class="container" id="employee-dashboard">
+    <h2>👤 入社手続き・基本情報入力</h2>
+    <form id="info-form">
+      
+      <div class="section-title">1. 基本情報</div>
+      <div class="form-group">
+        <label>氏名（漢字）</label>
+        <div style="display: flex; gap: 10px;">
+          <input type="text" id="last-name-kanji"  placeholder="姓（例：山田）">
+          <input type="text" id="first-name-kanji" placeholder="名（例：太郎）">
+        </div>
+        <label style="margin-top:10px;">氏名（フリガナ）</label>
+        <div style="display: flex; gap: 10px;">
+          <input type="text" id="last-name-kana" placeholder="セイ（例：ヤマダ）">
+          <input type="text" id="first-name-kana" placeholder="メイ（例：タロウ）">
+        </div>
+      </div>
+      <div class="form-group" style="display: flex; gap: 10px;">
+        <div style="flex: 1;"><label>生年月日</label><input type="date" id="birthdate"></div>
+        <div style="flex: 1;"><label>性別</label>
+          <select id="gender"><option value="">選択</option><option value="male">男性</option><option value="female">女性</option></select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>国籍</label>
+        <div class="radio-group">
+          <label><input type="radio" name="nationality-type" id="radio-japan" value="japan" checked> 日本</label>
+          <label><input type="radio" name="nationality-type" id="radio-foreign" value="foreign"> 外国籍</label>
+        </div>
+      </div>
+      <div id="foreign-section" class="hidden form-group" style="border-left: 3px solid #ffc107; background: #fffdf5;">
+        <label>ローマ字氏名</label>
+        <div style="display: flex; gap: 10px;">
+          <input type="text" id="last-name-roman" placeholder="LAST NAME" oninput="this.value = this.value.toUpperCase().replace(/[^A-Z\s]/g, '')">
+          <input type="text" id="first-name-roman" placeholder="FIRST NAME" oninput="this.value = this.value.toUpperCase().replace(/[^A-Z\s]/g, '')">
+        </div>
+        <label style="margin-top:10px;">在留資格</label>
+        <select id="visa-status">
+          <option value="">選択してください</option>
+          <optgroup label="就労制限なし"><option value="永住者">永住者</option><option value="定住者">定住者</option><option value="日本人の配偶者等">日本人の配偶者等</option></optgroup>
+          <optgroup label="就労ビザ"><option value="技術・人文知識・国際業務">技術・人文知識・国際業務</option><option value="高度専門職">高度専門職</option><option value="特定技能">特定技能</option></optgroup>
+          <optgroup label="その他"><option value="留学">留学</option><option value="家族滞在">家族滞在</option><option value="その他">その他</option></optgroup>
+        </select>
+        <label style="margin-top:10px;">在留期間（満了日）</label><input type="date" id="visa-expiry">
+      </div>
+
+      <div class="section-title">2. 住所情報</div>
+      <div class="form-group">
+        <label>現住所</label><input type="text" id="current-address">
+        <label style="margin-top:10px;"><input type="checkbox" id="address-same-check" checked> 住民票の住所は現住所と同じ</label>
+      </div>
+      <div id="registered-address-section" class="hidden form-group">
+        <label>住民票の住所</label><input type="text" id="registered-address">
+      </div>
+
+      <div class="section-title">3. 前職・本年中の所得</div>
+      <div class="form-group">
+        <label>本年（1月1日以降）に他社からの給与所得はありましたか？</label>
+        <div class="radio-group">
+          <label><input type="radio" name="income-this-year" id="radio-income-no" value="no" checked> いいえ</label>
+          <label><input type="radio" name="income-this-year" id="radio-income-yes" value="yes"> はい</label>
+        </div>
+      </div>
+      <div id="tax-slip-section" class="hidden form-group" style="border-left: 3px solid #28a745;">
+        <label>源泉徴収票の画像アップロード</label><input type="file" id="tax-slip-image" accept="image/*,.pdf">
+        <label style="margin-top:8px; font-weight:normal;"><input type="checkbox" id="tax-slip-later"> 後日提出する</label>
+      </div>
+
+      <div class="section-title">4. 公的番号・口座・通勤経路</div>
+      <div class="form-group">
+        <label>マイナンバー</label>
+        <input type="text" id="mynumber" class="strict-number" maxlength="12" inputmode="numeric" placeholder="半角数字12桁" autocomplete="off">
+        <label style="margin-top:8px; font-weight:normal; color:#d32f2f;">📸 マイナンバー確認書類の画像</label>
+        <input type="file" id="mynumber-image" accept="image/*">
+        
+        <label style="margin-top:12px;">基礎年金番号（10桁）</label>
+        <input type="text" id="pension-num" class="strict-number" maxlength="10" inputmode="numeric" placeholder="半角数字10桁">
+        <label style="margin-top:8px; font-weight:normal; color:#d32f2f;">📸 年金手帳 または 基礎年金番号通知書の画像</label>
+        <input type="file" id="pension-image" accept="image/*">
+        
+        <label style="margin-top:12px;">雇用保険被保険者番号（11桁）</label>
+        <input type="text" id="emp-insurance-num" class="strict-number" maxlength="11" inputmode="numeric" placeholder="半角数字11桁">
+        <label style="margin-top:8px; font-weight:normal; color:#d32f2f;">📸 雇用保険被保険者証の画像</label>
+        <input type="file" id="emp-insurance-image" accept="image/*">
+      </div>
+
+      <div class="form-group">
+        <label>給与振込口座</label>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <input type="text" id="bank-name" placeholder="金融機関名">
+          <input type="text" id="branch-name" placeholder="支店名">
+          <select id="account-type"><option value="普通">普通</option><option value="当座">当座</option></select>
+          <input type="text" id="account-num" class="strict-number" maxlength="7" inputmode="numeric" placeholder="口座番号（7桁）">
+        </div>
+      </div>
+
+      <div class="form-group" style="background: #f0f8ff; border-left: 3px solid #17a2b8;">
+        <label style="color: #0056b3; font-size: 15px; margin-bottom: 10px;">🚃 通勤経路・交通費の申告</label>
+        
+        <label>通勤経路</label>
+        <input type="text" id="commute-route" placeholder="例：自宅〜JR新宿駅〜地下鉄六本木駅〜会社">
+        
+        <label style="margin-top:10px;">1ヶ月の定期代（または1ヶ月の交通費見込み額）</label>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <input type="text" id="commute-allowance" class="strict-number" inputmode="numeric" placeholder="例：12000" style="width: 50%;">
+          <span style="font-size: 14px; color: #555; font-weight: bold;">円</span>
+        </div>
+        <p class="help-text">※片道ではなく、1ヶ月分の金額を入力してください。</p>
+      </div>
+
+
+      <div class="section-title">5. 被扶養者情報（社会保険）</div>
+      <div class="form-group">
+        <label>健康保険の扶養に追加するご家族はいますか？</label>
+        <div class="radio-group">
+          <label><input type="radio" name="has-dependent" value="no" checked> いいえ</label>
+          <label><input type="radio" name="has-dependent" value="yes"> はい（追加する）</label>
+        </div>
+      </div>
+
+      <div id="dependent-section" class="hidden form-group" style="border: 2px solid #0056b3; background: #fff;">
+        <h4 style="margin-top: 0; color: #0056b3; border-bottom: 1px solid #ccc; padding-bottom: 8px;">被扶養者の情報</h4>
+        
+        <label>氏名（漢字）</label>
+        <div style="display: flex; gap: 10px;">
+          <input type="text" id="dep-last-name-kanji" class="dep-input" placeholder="姓（例：山田）">
+          <input type="text" id="dep-first-name-kanji" class="dep-input" placeholder="名（例：花子）">
+        </div>
+        
+        <label style="margin-top:10px;">氏名（フリガナ）</label>
+        <div style="display: flex; gap: 10px;">
+          <input type="text" id="dep-last-name-kana" class="dep-input" placeholder="セイ（例：ヤマダ）">
+          <input type="text" id="dep-first-name-kana" class="dep-input" placeholder="メイ（例：ハナコ）">
+        </div>
+        
+        <label style="margin-top:10px;">ローマ字氏名（外国籍の場合のみ）</label>
+        <div style="display: flex; gap: 10px;">
+          <input type="text" id="dep-last-name-roman" class="dep-input" placeholder="LAST NAME" oninput="this.value = this.value.toUpperCase().replace(/[^A-Z\s]/g, '')">
+          <input type="text" id="dep-first-name-roman" class="dep-input" placeholder="FIRST NAME" oninput="this.value = this.value.toUpperCase().replace(/[^A-Z\s]/g, '')">
+        </div>
+        
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+          <div style="flex: 1;"><label>生年月日</label><input type="date" id="dep-birth" class="dep-input"></div>
+          <div style="flex: 1;"><label>性別</label>
+            <select id="dep-gender" class="dep-input"><option value="">選択</option><option value="male">男性</option><option value="female">女性</option></select>
+          </div>
+          <div style="flex: 1;"><label>続柄</label>
+            <select id="dep-relation" class="dep-input"><option value="">選択</option><option value="配偶者">配偶者</option><option value="子">子</option><option value="父">父</option><option value="母">母</option><option value="その他">その他</option></select>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 10px;">
+          <div style="flex: 1;"><label>同居 / 別居</label>
+            <select id="dep-living" class="dep-input"><option value="同居">同居</option><option value="別居">別居</option></select>
+          </div>
+          <div style="flex: 1;">
+            <label>年間収入見込額</label>
+            <input type="text" id="dep-income" class="dep-input strict-number" inputmode="numeric" placeholder="例：1000000">
+          </div>
+        </div>
+        <label style="margin-top:10px;"><input type="checkbox" id="dep-disability" class="dep-input"> 障害あり</label>
+
+        <label style="margin-top:10px;">現在の状況（職業等） ★重要</label>
+        <select id="dep-status" class="dep-input">
+          <option value="">選択してください</option>
+          <option value="16歳以上の学生">16歳以上の学生</option>
+          <option value="直近で退職/失業保険終了">直近で退職 / 失業保険の受給終了</option>
+          <option value="継続して無職/パート">継続して無職 / パートタイム収入のみ</option>
+          <option value="年金受給者">年金受給者</option>
+          <option value="その他">その他（16歳未満の子どもなど）</option>
+        </select>
+
+        <label style="margin-top:10px;">扶養開始日（事由発生日）</label>
+        <input type="date" id="dep-start-date" class="dep-input">
+
+        <div id="doc-nav-area" class="doc-nav hidden">
+          <h4>📌 ご入力の状況から、以下の証明書類が必要です</h4>
+          <div id="doc-upload-container" style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;"></div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn-submit">上記の内容で提出する</button>
+    </form>
+
+    <div id="msg"></div>
+    <button type="button" id="btn-to-dashboard" onclick="window.location.href='/employee-dashboard.html'" style="display: none; background: #fff; color: #0056b3; border: 1px solid #0056b3; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 15px;">
+      従業員ダッシュボードへ移動 ➡️
+    </button>
+  </div>
+</body>
+</html>

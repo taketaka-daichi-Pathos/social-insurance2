@@ -1,5 +1,5 @@
 // src/services/employeeService.ts
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase.js';
 
 // 従業員データの型定義（カタログ要件を反映）
@@ -29,16 +29,23 @@ export interface EmployeeData {
  */
 export async function saveEmployeeData(uid: string, data: Partial<EmployeeData>) {
   try {
+    // 🌟 1. 念のための防壁：実行者の会社IDを取得
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) {
+        throw new Error("会社情報が読み込めないため、保存を中止しました。");
+    }
+
     // コレクション名 "employees" の中に、UIDをキーとしてドキュメントを作成
     const employeeRef = doc(db, 'employees', uid);
     
-    // { merge: true } をつけることで、既存データを消さずに差分だけ更新します
-    await setDoc(employeeRef, {
+    // 🌟 2. 修正：setDoc({merge:true}) から、より厳格な updateDoc へアップグレード！
+    // （万が一UIDが間違っていても、勝手に変な幽霊データを作らずエラーにしてくれる）
+    await updateDoc(employeeRef, {
       ...data,
       updatedAt: serverTimestamp() // 更新日時を自動記録
-    }, { merge: true });
+    });
     
-    console.log("Firestoreへの保存に成功しました:", uid);
+    console.log("Firestoreへの保存（更新）に成功しました:", uid);
   } catch (error) {
     console.error("Firestoreへの保存エラー:", error);
     throw error;

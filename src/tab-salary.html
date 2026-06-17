@@ -15,7 +15,14 @@
 
 <!-- 💡 給与操作ヘッダー -->
 <div style="display: flex; align-items: center; gap: 15px;">
-    
+  <div style="display: flex; align-items: center; gap: 10px; margin-right: 20px;">
+    <button id="btn-prev-month" style="padding: 5px 10px; cursor: pointer;">◀ 前月</button>
+    <span id="display-current-month" style="font-weight: bold; font-size: 16px;">読み込み中...</span>
+    <button id="btn-next-month" style="padding: 5px 10px; cursor: pointer;">次月 ▶</button>
+    <span id="display-target-period" style="font-size: 12px; color: #555; background: #f8f9fa; padding: 4px 10px; border-radius: 20px; border: 1px solid #ddd; margin-left: 5px; font-weight: bold; box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);">
+      計算期間を読み込み中...
+    </span>
+  </div> 
   <div style="display: flex; gap: 10px;">
     <div>
       <input type="file" id="csv-upload" accept=".csv" style="display: none;">
@@ -37,8 +44,8 @@
     
     <div style="display: flex; gap: 4px; align-items: center;">
       <span style="font-size: 12px; font-weight: bold; color: #495057; margin-right: 2px;">👤状態:</span>
-      <button id="btn-monthly-active" class="filter-btn active" style="padding: 4px 10px; background: #0056b3; color: white; border: none; border-radius: 12px; cursor: pointer; font-size: 11px; font-weight: bold;">在籍</button>
-      <button id="btn-monthly-retired" class="filter-btn" style="padding: 4px 10px; background: #e0e0e0; color: #555; border: none; border-radius: 12px; cursor: pointer; font-size: 11px; font-weight: bold;">退職</button>
+      <button id="btn-salary-active" class="filter-btn active" style="padding: 4px 10px; background: #0056b3; color: white; border: none; border-radius: 12px; cursor: pointer; font-size: 11px; font-weight: bold;">在籍</button>
+      <button id="btn-salary-retired" class="filter-btn" style="padding: 4px 10px; background: #e0e0e0; color: #555; border: none; border-radius: 12px; cursor: pointer; font-size: 11px; font-weight: bold;">退職</button>
     </div>
 
     <div style="width: 1px; height: 16px; background: #e9ecef;"></div>
@@ -50,10 +57,16 @@
         <option value="regular">一般（17日基準）のみ</option>        
         <option value="part_time">パート（15日基準）のみ</option>    
         <option value="short_time">短時間（11日基準）のみ</option>
-        </select>
+      </select>
     </div>
 
-  </div>
+    <div style="width: 1px; height: 16px; background: #e9ecef;"></div>
+
+    <div style="display: flex; align-items: center; gap: 4px;">
+      <span style="font-size: 13px; color: #495057;">🔍</span>
+      <input type="text" id="search-salary-emp" placeholder="社員名・IDで検索" style="border: none; border-bottom: 1px solid #ced4da; background: transparent; font-size: 13px; color: #0056b3; outline: none; padding-bottom: 2px; width: 140px;">
+    </div>
+    </div>
 </div>
 
 
@@ -74,7 +87,7 @@
           
           <thead style="position: sticky; top: 0; background-color: #f4f6f8; z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
             <tr>
-              <th style="width: 15%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">氏名 / 雇用形態</th>
+              <th style="width: 15%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">氏名 / 雇用形態 / 区分</th>
               <th style="width: 12%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">現在の等級</th>
               <th style="width: 8%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">基礎日数</th>
               <th style="width: 12%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">固定的賃金</th>
@@ -127,29 +140,42 @@
   
       <div id="payroll-santei" class="sub-tab-content" style="display: none;">
         <h3 style="color: #333; margin-bottom: 15px;">🏢 算定基礎届 (4〜6月平均) の一括処理</h3>
-        <p style="color: #666; font-size: 13px;">4月・5月・6月の給与実績（固定的賃金＋非固定的賃金）をもとに、新しい標準報酬月額を自動計算します。<br>
-        ※基礎日数が17日（パートは11日）未満の月は、法律に基づき平均計算から自動除外されます。</p>
         
-        <div style="display: flex; gap: 15px; align-items: center; background: #f4f6f8; padding: 6px 12px; border-radius: 6px; border: 1px solid #dee2e6; width: fit-content; margin-bottom: 15px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 15px;">
           
-          <div style="display: flex; gap: 4px; align-items: center;">
-            <span style="font-size: 12px; font-weight: bold; color: #555; margin-right: 5px;">👤 対象:</span>
-            <button id="btn-santei-active" class="filter-btn active" style="padding: 6px 16px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">在籍中</button>
-            <button id="btn-santei-retired" class="filter-btn" style="padding: 6px 16px; background: #e0e0e0; color: #555; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">退職済</button>  
+          <p style="color: #666; font-size: 13px; margin: 0;">
+            4月・5月・6月の給与実績（固定的賃金＋非固定的賃金）をもとに、新しい標準報酬月額を自動計算します。<br>
+            ※基礎日数が17日（パートは11日）未満の月は、法律に基づき平均計算から自動除外されます。
+          </p>
+          
+          <div style="display: flex; gap: 15px; align-items: center; background: #f4f6f8; padding: 6px 12px; border-radius: 6px; border: 1px solid #dee2e6; width: fit-content;">
+            
+            <div style="display: flex; gap: 4px; align-items: center;">
+              <span style="font-size: 12px; font-weight: bold; color: #555; margin-right: 5px;">👤 対象:</span>
+              <button id="btn-santei-active" class="filter-btn active" style="padding: 6px 16px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">在籍中</button>
+              <button id="btn-santei-retired" class="filter-btn" style="padding: 6px 16px; background: #e0e0e0; color: #555; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">退職済</button>  
+            </div>
+
+            <div style="width: 1px; height: 20px; background: #ccc;"></div>
+
+            <div style="display: flex; align-items: center;">
+              <label style="font-size: 12px; font-weight: bold; color: #555; margin-right: 5px;">📋 区分: </label>
+              <select id="santei-emp-filter" style="border: none; border-bottom: 1px solid #ced4da; background: transparent; font-size: 13px; color: #0056b3; font-weight: bold; cursor: pointer; outline: none; padding-bottom: 2px;">
+                <option value="all">すべて表示</option>
+                <option value="regular">一般（17日基準）のみ</option>        
+                <option value="part_time">パート（15日基準）のみ</option>    
+                <option value="short_time">短時間（11日基準）のみ</option>
+              </select>
+            </div>
+
+            <div style="width: 1px; height: 20px; background: #ccc;"></div>
+
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <span style="font-size: 13px; color: #555;">🔍</span>
+              <input type="text" id="search-santei-emp" placeholder="社員名・IDで検索" style="border: none; border-bottom: 1px solid #ced4da; background: transparent; font-size: 13px; color: #0056b3; font-weight: bold; outline: none; padding-bottom: 2px; width: 140px;">
+            </div>
+            
           </div>
-
-          <div style="width: 1px; height: 20px; background: #ccc;"></div>
-
-          <div style="display: flex; align-items: center;">
-            <label style="font-size: 12px; font-weight: bold; color: #555; margin-right: 5px;">📋 区分: </label>
-            <select id="santei-emp-filter" style="border: none; border-bottom: 1px solid #ced4da; background: transparent; font-size: 13px; color: #0056b3; font-weight: bold; cursor: pointer; outline: none; padding-bottom: 2px;">
-              <option value="all">すべて表示</option>
-              <option value="regular">一般（17日基準）のみ</option>        
-              <option value="part_time">パート（15日基準）のみ</option>    
-              <option value="short_time">短時間（11日基準）のみ</option>
-            </select>
-          </div>
-
         </div>
 
 
@@ -158,7 +184,7 @@
           <table style="width: 100%; min-width: 1000px; font-size: 13px; border-collapse: collapse; text-align: left;">
             <thead style="position: sticky; top: 0; background-color: #e9ecef; z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
               <tr>
-                <th style="width: 15%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">氏名 / 雇用形態</th>
+                <th style="width: 15%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">氏名 / 雇用形態 / 区分</th>
                 <th style="width: 15%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">4月 実績<br><span style="font-size:10px; color:#666;">(支給額 / 基礎日数)</span></th>
                 <th style="width: 15%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">5月 実績<br><span style="font-size:10px; color:#666;">(支給額 / 基礎日数)</span></th>
                 <th style="width: 15%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">6月 実績<br><span style="font-size:10px; color:#666;">(支給額 / 基礎日数)</span></th>
@@ -179,25 +205,25 @@
       </div>
   
       <div id="payroll-bonus" class="sub-tab-content" style="display: none;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
 
-          <div>
-            <h3 style="color: #333; margin: 0 0 5px 0;">🎁 賞与（ボーナス）計算と賞与支払届</h3>
-            <p style="color: #666; font-size: 13px; margin: 0;">健保は年間累計573万円、厚年は1回150万円の上限ストッパーが自動で発動します。</p>
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px;">
 
-            <div style="margin-top: 10px; font-size: 13px;">
-                <label style="font-weight: bold; color: #0056b3;">📅 賞与支給日：</label>
-                <input type="date" id="bonus-payment-date" value="2026-06-15" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;">
-                
-                <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                  <span style="font-size: 11px; color: #555; font-weight: bold;">📜 支給実績のある日（クリックで復元）：</span>
-                  <div id="bonus-history-container" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
-                </div>
-                </div>   
-    
-         </div>
-          
-         <div style="display: flex; gap: 20px; align-items: center; white-space: nowrap;">
+        <div>
+          <h3 style="color: #333; margin: 0 0 5px 0;">🎁 賞与（ボーナス）計算と賞与支払届</h3>
+          <p style="color: #666; font-size: 13px; margin: 0;">健保は年間累計573万円、厚年は1回150万円の上限ストッパーが自動で発動します。</p>
+
+          <div style="margin-top: 10px; font-size: 13px;">
+            <label style="font-weight: bold; color: #0056b3;">📅 賞与支給日：</label>
+            <input type="date" id="bonus-payment-date" value="2026-06-15" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px;">
+            
+            <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <span style="font-size: 11px; color: #555; font-weight: bold;">📜 支給実績のある日（クリックで復元）：</span>
+              <div id="bonus-history-container" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+            </div>
+          </div>   
+        </div>
+        
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 10px; white-space: nowrap;">
 
           <div style="display: flex; gap: 8px;">
             <input type="file" id="bonus-csv-upload" accept=".csv" style="display: none;">
@@ -225,16 +251,23 @@
               </select>
             </div>
 
-          </div>
-          </div>
+            <div style="width: 1px; height: 20px; background: #ccc;"></div>
 
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <span style="font-size: 13px; color: #555;">🔍</span>
+              <input type="text" id="search-bonus-emp" placeholder="社員名・IDで検索" style="border: none; border-bottom: 1px solid #ced4da; background: transparent; font-size: 13px; color: #0056b3; font-weight: bold; outline: none; padding-bottom: 2px; width: 140px;">
+            </div>
+
+          </div>
         </div>
+
+      </div>
   
         <div class="table-container" style="max-height: 65vh; overflow-y: auto; overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
           <table style="width: 100%; min-width: 1000px; font-size: 13px; border-collapse: collapse; text-align: left;">
             <thead style="position: sticky; top: 0; background-color: #e9ecef; z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
               <tr>
-                <th style="width: 15%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">氏名 / 雇用形態</th>
+                <th style="width: 15%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">氏名 / 雇用形態 / 区分</th>
                 <th style="width: 18%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">今年度の累計賞与(健保)</th>
                 <th style="width: 20%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">今回の賞与額（総支給）</th>
                 <th style="width: 22%; padding: 12px 10px; border-bottom: 2px solid #dee2e6;">保険料対象額（標準賞与額）</th>
@@ -251,7 +284,7 @@
         </div>
       </div>
   
-      <div id="salary-slip" class="sub-tab-content"style="display: none;">
+      <div id="salary-slip" class="sub-tab-content" style="display: none;">
 
         <style>
           @media print {

@@ -21,14 +21,18 @@
 
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
           <div>
-              <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">事業所名</label>
+              <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">会社名（法人名）</label>
               <input type="text" id="master-company-name" placeholder="例: 株式会社パトスロゴス" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; background: #fdfdfd;">
           </div>
           <div>
               <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">事業主氏名</label>
               <input type="text" id="master-employer-name" placeholder="例: 竹高 大地" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; background: #fdfdfd;">
           </div>
-
+          <div style="grid-column: span 2;">
+            <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">事業所名（例：本社、東京支店など）</label>
+            <input type="text" id="master-branch-name" placeholder="例: 本社" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; background: #fff3cd; border-color: #ffeeba;">
+            <p style="margin: 4px 0 0; font-size: 11px; color: #6c757d;"></p>
+        　</div>
           <div>
               <label style="font-weight: bold; font-size: 13px; color: #495057; display: block; margin-bottom: 6px;">郵便番号</label>
               <div style="display: flex; align-items: center; gap: 8px;">
@@ -57,28 +61,27 @@
       <hr style="border: none; border-top: 1px dashed #ced4da; margin: 24px 0;">
 
       <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
-          <div>
-              <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">都道府県コード(2桁)</label>
-              <input type="text" id="master-pref-code" placeholder="例: 13" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
-          </div>
-          <div>
-              <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">郡市区符号(2桁)</label>
-              <input type="text" id="master-city-code" placeholder="例: 01" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
-          </div>
-          <div>
-              <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">整理記号(年金)</label>
-              <input type="text" id="master-pension-symbol" placeholder="例: ｱｲｳ" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
-          </div>
-          <div>
-              <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">事業所番号(年金)</label>
-              <input type="text" id="master-pension-number" placeholder="例: 12345" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
-          </div>
-          
-          <div style="grid-column: span 2;">
-              <label style="font-weight: bold; font-size: 13px; color: #0b7285; display: block; margin-bottom: 6px;">雇用保険事業所番号(ハロワ)</label>
-              <input type="text" id="master-emp-ins-number" placeholder="例: 1301-123456-7" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #99e9f2; border-radius: 4px; background: #e3fafc;">
-          </div>
-      </div>
+        <div>
+            <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">都道府県コード(2桁)</label>
+            <input type="text" id="master-pref-code" class="strict-number" inputmode="numeric" placeholder="例: 13" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+        </div>
+        <div>
+            <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">郡市区符号(2桁)</label>
+            <input type="text" id="master-city-code" class="strict-number" inputmode="numeric" placeholder="例: 01" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+        </div>
+        <div>
+            <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">整理記号(年金)</label>
+            <input type="text" id="master-pension-symbol" placeholder="例: ｱｲｳ" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+        </div>
+        <div>
+            <label style="font-weight: bold; font-size: 13px; color: #2b8a3e; display: block; margin-bottom: 6px;">事業所番号(年金)</label>
+            <input type="text" id="master-pension-number" class="strict-number" inputmode="numeric" placeholder="例: 12345" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b2f2bb; border-radius: 4px; background: #ebfbee;">
+        </div>
+        
+        <div style="grid-column: span 2;">
+            <label style="font-weight: bold; font-size: 13px; color: #0b7285; display: block; margin-bottom: 6px;">雇用保険事業所番号(ハロワ)</label>
+            <input type="text" id="master-emp-ins-number" class="strict-number" inputmode="numeric" placeholder="例: 1301-123456-7" style="width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #99e9f2; border-radius: 4px; background: #e3fafc;">
+        </div>
 
       <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #f1f3f5; text-align: right; display: flex; justify-content: flex-end; align-items: center; gap: 16px;">
           <span id="save-msg-numbers" style="color: #e8590c; font-weight: bold; display: none; font-size: 14px; animation: fadeIn 0.3s;">
@@ -90,7 +93,7 @@
       </div>
   </div>
 </div>
-
+</div>
 <div id="settings-payroll" class="settings-tab-content" style="display: none;">
   <div class="panel" style="background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;">
       <h3 style="margin-top: 0; color: #0056b3;">🏢 給与計算連動マスタ（全社共通ルール）</h3>

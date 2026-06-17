@@ -1,4 +1,4 @@
-import { signOut } from 'firebase/auth';
+import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, collection, getDocs, updateDoc,writeBatch, getDoc, addDoc, query, where,onSnapshot } from 'firebase/firestore'; 
 import emailjs from '@emailjs/browser'; 
 import { auth, db } from './config/firebase.js';
@@ -6,6 +6,39 @@ import { calculateSocialInsurance, DEFAULT_RATES } from './insuranceMaster.js';
 import { initEmployeeMasterUI } from './employeeMaster.js';
 import { PREFECTURE_HEALTH_RATES } from './insuranceMaster.js';
 import { initLifeEventUI } from './tab-life-event.js';
+import Encoding from 'encoding-japanese';
+
+// =================================================================
+// 🛡️ セキュリティガード＆会社ID強制ロック（最強版）
+// =================================================================
+onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    // ログインしていない人は強制送還
+    alert('セッションが切れました。もう一度ログインしてください。');
+    window.location.href = '/index.html';
+  } else {
+    // 🌟 【最強ガード】ログイン中なら、必ずデータベースから「その人の本当の会社ID」を取得する！
+    try {
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists() && userDoc.data().companyId) {
+        const realCompanyId = userDoc.data().companyId;
+        
+        // ブラウザの記憶がどうなっていようが、強制的に「本当の会社ID」で上書きロックする！
+        localStorage.setItem('current_company_id', realCompanyId);
+        console.log("🔓 ログイン確認完了＆会社IDロック:", realCompanyId);
+        
+        // 🌟 ロックが完了してから、安全に会社情報を読み込む！（順番が超大事）
+        loadCompanySettings(); 
+        
+      } else {
+        console.warn("会社IDが見つかりません。");
+      }
+    } catch (error) {
+      console.error("ユーザー情報の取得エラー:", error);
+    }
+  }
+});
+
 const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement;
 const inviteForm = document.getElementById('invite-form') as HTMLFormElement;
 const inviteEmailInput = document.getElementById('invite-email') as HTMLInputElement;
@@ -29,7 +62,7 @@ let selectedUserEmail: string | null = null;
 let currentOnboardingUsers: any[] = []; // CSV一括出力のために承認済のユーザーを貯める箱
 let currentSubmittedUsers: any[] = [];  // 💡 追加：一括マスタ異動のために「提出済」のユーザーを貯める箱
 
-// メール送信共通関数
+
 // メール送信共通関数
 async function sendInviteEmail(email: string) {
   try {
@@ -103,13 +136,86 @@ if (savedTabId) {
   }
 }
 
-// 一覧読み込み
+
+// ==========================================
+// 🏢 会社情報のロード（🔥 SaaS完全対応版！）
+// ==========================================
+async function loadCompanySettings() {
+  const currentCompanyId = localStorage.getItem('current_company_id');
+  if (!currentCompanyId) return;
+
+  try {
+    // 🌟 1. 自分の会社IDのデータをFirebaseから取得！
+    const docSnap = await getDoc(doc(db, 'companies', currentCompanyId));
+
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      console.log("🏢 自分の会社データを読み込みました！", data);
+
+      // 🌟 2. 取得したデータを画面の入力欄にセットする！（ここが抜けていたか古かった部分です）
+      (document.getElementById('master-company-name') as HTMLInputElement).value = data.companyName || '';
+      (document.getElementById('master-employer-name') as HTMLInputElement).value = data.employerName || '';
+      
+      // mainBranch（事業所情報）の中身を取り出してセット
+      if (data.mainBranch) {
+        (document.getElementById('master-branch-name') as HTMLInputElement).value = data.mainBranch.branchName || '';
+        (document.getElementById('master-address') as HTMLInputElement).value = data.mainBranch.address || '';
+        
+        // ハイフン区切りのデータを分割してセット
+        if (data.mainBranch.zipCode) {
+          const zipSplit = data.mainBranch.zipCode.split('-');
+          (document.getElementById('master-zip1') as HTMLInputElement).value = zipSplit[0] || '';
+          (document.getElementById('master-zip2') as HTMLInputElement).value = zipSplit[1] || '';
+        }
+        if (data.mainBranch.tel) {
+          const telSplit = data.mainBranch.tel.split('-');
+          (document.getElementById('master-tel1') as HTMLInputElement).value = telSplit[0] || '';
+          (document.getElementById('master-tel2') as HTMLInputElement).value = telSplit[1] || '';
+          (document.getElementById('master-tel3') as HTMLInputElement).value = telSplit[2] || '';
+        }
+
+        // 下の段の各種コード類もセット！
+        (document.getElementById('master-pref-code') as HTMLInputElement).value = data.mainBranch.prefCode || '';
+        (document.getElementById('master-city-code') as HTMLInputElement).value = data.mainBranch.cityCode || '';
+        (document.getElementById('master-pension-symbol') as HTMLInputElement).value = data.mainBranch.officeSymbol || '';
+        (document.getElementById('master-pension-number') as HTMLInputElement).value = data.mainBranch.officeNumber || '';
+        (document.getElementById('master-emp-ins-number') as HTMLInputElement).value = data.mainBranch.empInsNumber || '';
+      }
+
+      // LocalStorageも最新に更新（念のため）
+      localStorage.setItem(`company_master_${currentCompanyId}`, JSON.stringify(data));
+
+    } else {
+      console.log("会社データがまだありません。新規登録です。");
+    }
+  } catch (e) {
+    console.error("会社情報の読み込みエラー:", e);
+  }
+}
+
+// loadCompanySettings();
+
+// 🌟 追加①：関数の外（ファイルの上の方など）で、カメラの電源スイッチを変数として用意しておく
+let unsubscribeInvites: any = null;
 // 一覧読み込み（🔥 リアルタイム監視版に進化！）
-function loadEmployeeList() { // 💡 asyncを外してOKです！
+// 一覧読み込み（🔥 リアルタイム監視＆SaaSフィルター完全対応版！）
+function loadEmployeeList() { 
   if (!emailListBody || !onboardingListBody) return;
 
-  // 🌟 魔法の監視コード「onSnapshot」で invites コレクションを監視！
-  onSnapshot(collection(db, 'invites'), async (querySnapshot) => {
+  // 🌟 追加①：ログイン中の自分の「会社ID」をLocalStorageから取得
+  const currentCompanyId = localStorage.getItem('current_company_id');
+  if (!currentCompanyId) return;
+
+  // 🌟 追加②：魔法のフィルター！「自分の会社の招待状」だけを狙い撃ち！
+  const invitesQuery = query(collection(db, 'invites'), where('companyId', '==', currentCompanyId));
+
+// 🌟 追加②：もしすでに監視カメラが動いていたら、一度停止（キャンセル）する！
+if (unsubscribeInvites) {
+  unsubscribeInvites();
+}
+
+// 🌟 変更③：onSnapshot の戻り値（停止スイッチ）を変数に保存しておく！
+unsubscribeInvites = onSnapshot(invitesQuery, async (querySnapshot) => {
     
     // 💡 変更があるたびに、一度テーブルの中身を真っさらにする（増殖を防ぐため）
     emailListBody.innerHTML = ''; 
@@ -118,8 +224,10 @@ function loadEmployeeList() { // 💡 asyncを外してOKです！
     currentSubmittedUsers = [];
 
     try {
-      // ユーザーのプロフィール情報（名前など）も最新を取得
-      const usersSnap = await getDocs(collection(db, 'users'));
+      // 🌟 追加③：ユーザーのプロフィール情報も「自分の会社の人」だけに絞る！
+      const usersQuery = query(collection(db, 'users'), where('companyId', '==', currentCompanyId));
+      const usersSnap = await getDocs(usersQuery);
+      
       const userProfiles: any = {};
       usersSnap.forEach(doc => {
         userProfiles[doc.id] = doc.data();
@@ -136,7 +244,7 @@ function loadEmployeeList() { // 💡 asyncを外してOKです！
         if (status === '完了') return; 
 
         if (status === '未登録') {
-          // --- 元々の未登録処理 ---
+          // --- 元々の未登録処理（完全維持！） ---
           const tr = document.createElement('tr');
           tr.innerHTML = `
             <td style="padding: 12px 8px; font-weight: bold; color: #555;">${email}</td>
@@ -151,14 +259,14 @@ function loadEmployeeList() { // 💡 asyncを外してOKです！
           btn.style.padding = '4px 8px'; btn.style.fontSize = '12px'; btn.style.cursor = 'pointer';
           btn.addEventListener('click', async () => {
             btn.innerText = '送信中...';
-            const success = await sendInviteEmail(email);
+            const success = await sendInviteEmail(email); // 竹高さんのオリジナル関数を維持！
             alert(success ? '再送しました！' : '送信失敗');
             btn.innerText = '招待メール再送';
           });
           actionCell?.appendChild(btn);
 
         } else {
-          // --- ステータスごとのバッジとテキスト判定 ---
+          // --- ステータスごとのバッジとテキスト判定（完全維持！） ---
           let statusBadge = '';
           let taskText = '';
           if (status === '入力中') {
@@ -193,7 +301,7 @@ function loadEmployeeList() { // 💡 asyncを外してOKです！
           tr.className = 'selectable';
           tr.innerHTML = `<td style="padding: 12px 8px; font-weight: bold; color: #0056b3;">${displayName}</td><td>${statusBadge}</td><td style="color: #666; font-size: 13px;">${taskText}</td>`;
           
-          tr.addEventListener('click', () => showReviewPanel(email, status));
+          tr.addEventListener('click', () => showReviewPanel(email, status)); // 竹高さんのオリジナル関数を維持！
           
           onboardingListBody.appendChild(tr);
         }
@@ -227,13 +335,19 @@ function calculateAgeForPayroll(birthdateStr: string | undefined, targetYear: nu
   return age;
 }
 
-// 💡 DBの履歴から「指定した年月」に適用すべき料率を取得する！
+// 💡 DBの履歴から「指定した年月」に適用すべき料率を取得する！（SaaS対応版）
 async function fetchCompanyInsuranceSettings(targetYear: number, targetMonth: number) {
+  // 🌟 コンソールからいつでも実験できるように window に登録！
+
   try {
-    // 比較用に給与月を 'YYYY-MM' 形式にする（例: 2026年6月 → '2026-06'）
+    // 🌟 ログイン中の会社IDを取得！
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) return DEFAULT_RATES; // 会社IDがなければデフォルトを返す
+
     const targetStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
 
-    const historyRef = collection(db, 'settings', 'insurance', 'history');
+    // 🚨 ここがSaaSの魔法！「自分の会社IDの中にある insurance_history」を見に行く！
+    const historyRef = collection(db, 'companies', currentCompanyId, 'insurance_history');
     const querySnapshot = await getDocs(historyRef);
 
     let settingsList: any[] = [];
@@ -242,14 +356,11 @@ async function fetchCompanyInsuranceSettings(targetYear: number, targetMonth: nu
     });
 
     if (settingsList.length > 0) {
-      // 降順（新しい順）に並び替え: ['2026-06', '2026-04', '2025-04']
       settingsList.sort((a, b) => b.id.localeCompare(a.id));
-
-      // 💡 過去の履歴を新しい順に見ていき、「計算する月（targetStr）以前」のものを探す
       const validSetting = settingsList.find(s => s.id <= targetStr);
 
       if (validSetting) {
-        console.log(`${targetStr} に適用される料率(${validSetting.id}開始)を読み込みました`);
+        console.log(`🏢 ${currentCompanyId} の ${targetStr} に適用される料率(${validSetting.id}開始)を読み込みました`);
         return {
           insuranceType: validSetting.insuranceType || 'kyokai',
           prefecture: validSetting.prefecture || '東京都',
@@ -272,7 +383,8 @@ async function fetchCompanyInsuranceSettings(targetYear: number, targetMonth: nu
   return DEFAULT_RATES; 
 }
   
-
+// ⭕️ 関数の「外側」に書くことで、画面を開いた瞬間にコンソールから呼べるようになります！
+(window as any).fetchCompanyInsuranceSettings = fetchCompanyInsuranceSettings;
 
 // ==========================================
 // 🔍 詳細パネルの表示 ＆ 一時保存・復元・ロック完全統合エンジン
@@ -287,26 +399,32 @@ async function showReviewPanel(email: string, status: string = '') {
     viewForeigner.innerText = ''; viewNumbers.innerText = ''; viewDependentArea.innerHTML = '<span style="color:#999;">なし</span>';
   
     try {
-      const usersSnapshot = await getDocs(collection(db, 'users'));
+      // 🌟 1. 会社IDをローカルストレージから取得して防壁を張る！
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) {
+          viewName.innerHTML = '<span style="color:#ffc107;">⚠️ 会社情報が読み込めません。</span>';
+          return;
+      }
+
+      // 🌟 2. 【超重要】「自社」の従業員だけを絞り込んで取得！！！（他社は絶対に見ない）
+      const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+      const usersSnapshot = await getDocs(usersQuery);
+      
       let userData: any = null;
       let targetUserId: string | null = null;
       
-      // 該当ユーザーと、そのドキュメントIDを特定
+      // 🌟 3. 該当ユーザーと、そのドキュメントIDを「自社の中から」特定
       usersSnapshot.forEach((uSnap) => {
         const d = uSnap.data();
-        if (d.lastNameKanji && (uSnap.id === email || d.email === email)) {
+        // IDが一致、またはメールアドレスが一致するかチェック
+        if (uSnap.id === email || d.email === email) {
           userData = d;
           targetUserId = uSnap.id;
         }
       });
-  
-      if (!userData && !usersSnapshot.empty) {
-        const firstDoc = usersSnapshot.docs[0];
-        if (firstDoc) {
-          userData = firstDoc.data();
-          targetUserId = firstDoc.id;
-        }
-      }
+
+      // 🚫 【削除完了】謎の「見つからなかったら最初のユーザーを表示する」危険なコードは完全消去しました！
+
   
       if (!userData) {
         viewName.innerHTML = '<span style="color:#ffc107;">⚠️ 詳細データが見つかりません。</span>';
@@ -399,6 +517,8 @@ async function showReviewPanel(email: string, status: string = '') {
       if (monthlyInput) monthlyInput.value = userData.workingHours?.monthly || '';
       if (socialInsTypeInput) socialInsTypeInput.value = userData.socialInsuranceType || 'regular';
       if (salaryTypeInput) salaryTypeInput.value = userData.salaryType || '月給';
+      baseSalaryInput?.dispatchEvent(new Event('input'));
+
       // フォームのロック/解除を切り替える内部関数
       const companyInputSection = document.getElementById('company-input-section');
       const toggleInputs = (isLocked: boolean) => {
@@ -441,7 +561,7 @@ async function showReviewPanel(email: string, status: string = '') {
               const insuranceResult = calculateSocialInsurance(totalFixedWage);
   
               // 💡 修正：新規フィールド作成でのエラーを防ぐため setDoc(..., {merge:true}) を使用！
-              await setDoc(doc(db, 'users', targetUserId), {
+              await updateDoc(doc(db, 'users', targetUserId), {
                 baseHealth: baseSalary,
                 basePension: baseSalary,
                 healthGrade: insuranceResult.healthGrade,
@@ -464,7 +584,7 @@ async function showReviewPanel(email: string, status: string = '') {
                   monthly: Number(monthlyInput?.value) || 0 
                 },
                 updatedAt: new Date()
-              }, { merge: true });
+              }); // 💡 末尾の `{ merge: true }` は updateDoc では不要なので消去！
   
               alert('💾 データを一時保存しました！（※まだ承認・ロックされていません）');
               newBtnSaveContract.innerText = '会社側の契約データを保存する';
@@ -495,7 +615,63 @@ async function showReviewPanel(email: string, status: string = '') {
         if (status === '確認待ち') {
           toggleInputs(false); // 編集許可
           newBtnApprove.style.display = 'block';
-          newBtnApprove.innerText = '承認する';
+
+        // =========================================================
+          // 🌟 NEW: パネルを開いた瞬間に、前の人のデータを完全消去する！
+          // =========================================================
+          const hrSalaryType = document.getElementById('hr-salary-type') as HTMLSelectElement;
+          if (hrSalaryType) hrSalaryType.value = '月給';
+
+          (document.getElementById('hr-base-salary') as HTMLInputElement).value = '';
+          (document.getElementById('hr-allowance-role') as HTMLInputElement).value = '';
+          (document.getElementById('hr-allowance-family') as HTMLInputElement).value = '';
+          (document.getElementById('hr-allowance-housing') as HTMLInputElement).value = '';
+          (document.getElementById('hr-fixed-ot-hours') as HTMLInputElement).value = '';
+          (document.getElementById('hr-allowance-fixed-ot') as HTMLInputElement).value = '';
+          (document.getElementById('hr-allowance-commute') as HTMLInputElement).value = '';
+          // =========================================================
+
+          // =========================================================
+            // 🌟🌟🌟 NEW: Firestoreからデータを取ってきて、瞬時に復元する！ 🌟🌟🌟
+            // =========================================================
+            if (targetUserId) {
+              const docRef = doc(db, 'users', targetUserId);
+              const snap = await getDoc(docRef);
+              
+              if (snap.exists()) {
+                const userData = snap.data();
+
+                // 1. 給与区分（日給・時給）を復元
+                if (hrSalaryType) hrSalaryType.value = userData.salaryType || '月給';
+
+                // 2. 雇用形態を復元
+                const hrEmpType = document.getElementById('hr-emp-type') as HTMLSelectElement;
+                if (hrEmpType && userData.contractInfo) hrEmpType.value = userData.contractInfo.empType || '正社員';
+
+                // 3. 基本給を復元（保存時に baseHealth に入れているため、そこから取得）
+                const hrBaseSalary = document.getElementById('hr-base-salary') as HTMLInputElement;
+                if (hrBaseSalary) hrBaseSalary.value = userData.baseHealth || '';
+
+                // 4. 各種手当を復元
+                if (userData.allowances) {
+                  (document.getElementById('hr-allowance-role') as HTMLInputElement).value = userData.allowances.role || '';
+                  (document.getElementById('hr-allowance-family') as HTMLInputElement).value = userData.allowances.family || '';
+                  (document.getElementById('hr-allowance-housing') as HTMLInputElement).value = userData.allowances.housing || '';
+                  (document.getElementById('hr-allowance-fixed-ot') as HTMLInputElement).value = userData.allowances.fixedOt || '';
+                  (document.getElementById('hr-allowance-commute') as HTMLInputElement).value = userData.allowances.commute || '';
+                }
+
+                // 5. 労働時間（週・月）を復元
+                if (userData.workingHours) {
+                  (document.getElementById('hr-weekly-hours') as HTMLInputElement).value = userData.workingHours.weekly || '';
+                  (document.getElementById('hr-monthly-days') as HTMLInputElement).value = userData.workingHours.monthly || '';
+                }
+              }
+            }
+            // =========================================================
+
+          
+          newBtnApprove.innerText = '承認する';          
           newBtnApprove.style.backgroundColor = '#28a745';
           newBtnReject.style.display = 'block';
           
@@ -512,26 +688,30 @@ async function showReviewPanel(email: string, status: string = '') {
               const insuranceResult = calculateSocialInsurance(totalFixedWage);
   
               if (targetUserId) {
-                await setDoc(doc(db, 'users', targetUserId), {
-                  employeeStatus: 'active', // 👈 ここで承認済（在籍）になる
-                  baseHealth: baseSalary,
-                  basePension: baseSalary,
-                  healthGrade: insuranceResult.healthGrade,
-                  pensionGrade: insuranceResult.pensionGrade,
-                  
-                  // 🌟 修正：画面から直接最新の値を拾って保存する！
-                  contractInfo: { 
-                    empType: (document.getElementById('hr-emp-type') as HTMLSelectElement)?.value || '正社員', 
-                    startDate: (document.getElementById('hr-join-date') as HTMLInputElement)?.value || '' 
-                  },
-                  
-                  // 🌟🌟🌟 NEW: 社会保険区分も忘れずにマスターへ保存！
-                  socialInsuranceType: (document.getElementById('hr-social-ins-type') as HTMLSelectElement)?.value || 'regular',
-                  
-                  allowances: { role: allowanceRole, family: allowanceFamily, housing: allowanceHousing, fixedOt: allowanceFixedOt, commute: Number(commuteInput?.value) || 0 },
-                  workingHours: { weekly: Number(weeklyInput?.value) || 0, monthly: Number(monthlyInput?.value) || 0 },
-                  updatedAt: new Date()
-                }, { merge: true });
+              // 🌟 修正：承認（本登録）という超重要処理こそ、厳格な updateDoc で幽霊化を完全ブロック！
+              await updateDoc(doc(db, 'users', targetUserId), {
+                // employeeStatus: 'active', // 👈 ここで承認済（在籍）になる
+                baseHealth: baseSalary,
+                basePension: baseSalary,
+                healthGrade: insuranceResult.healthGrade,
+                pensionGrade: insuranceResult.pensionGrade,
+
+                // 🌟🌟🌟 NEW: ここに追加！給与区分（月給・日給・時給）を保存！
+                salaryType: (document.getElementById('hr-salary-type') as HTMLSelectElement)?.value || '月給',
+
+                // 🌟 修正：画面から直接最新の値を拾って保存する！
+                contractInfo: {
+                  empType: (document.getElementById('hr-emp-type') as HTMLSelectElement)?.value || '正社員',
+                  startDate: (document.getElementById('hr-join-date') as HTMLInputElement)?.value || ''
+                },
+
+                // 🌟🌟🌟 NEW: 社会保険区分も忘れずにマスターへ保存！
+                socialInsuranceType: (document.getElementById('hr-social-ins-type') as HTMLSelectElement)?.value || 'regular',
+
+                allowances: { role: allowanceRole, family: allowanceFamily, housing: allowanceHousing, fixedOt: allowanceFixedOt, commute: Number(commuteInput?.value) || 0 },
+                workingHours: { weekly: Number(weeklyInput?.value) || 0, monthly: Number(monthlyInput?.value) || 0 },
+                updatedAt: new Date()
+              }); // 💡 末尾の `{ merge: true }` は不要になったので消去！
               }
   
 // 🚨 上の処理でFirebase(users)への給与データ等の保存(setDoc)が完了しています 🚨
@@ -626,7 +806,7 @@ async function showReviewPanel(email: string, status: string = '') {
 
               await updateDoc(doc(db, 'invites', email), { status: '承認済' });
               alert('🎯 契約・給与データの保存 ＆ 承認が完全完了しました！データは安全にロックされます。');
-              loadEmployeeList(); 
+              // (); 
               reviewPanel.classList.add('hidden');
             } catch (error) {
               console.error(error);
@@ -657,7 +837,7 @@ async function showReviewPanel(email: string, status: string = '') {
               });
               
               alert('従業員に差し戻しを通知しました。');
-              loadEmployeeList(); 
+              // loadEmployeeList(); 
               reviewPanel.classList.add('hidden');
             } catch (e) { 
                 console.error(e); 
@@ -676,7 +856,7 @@ async function showReviewPanel(email: string, status: string = '') {
             try {
               await updateDoc(doc(db, 'invites', email), { status: '確認待ち' });
               alert('承認を解除しました。内容を編集できます。');
-              loadEmployeeList(); 
+              // loadEmployeeList(); 
               reviewPanel.classList.add('hidden');
             } catch (e) { console.error(e); }
           });
@@ -757,8 +937,12 @@ document.getElementById('btn-batch-complete')?.addEventListener('click', async (
   btn.disabled = true;
 
   try {
-    // 🔥 全ユーザーの情報を取得して、確実に対応するドキュメントIDを探す
-    const usersSnap = await getDocs(collection(db, 'users'));
+   // 🌟 1. 会社IDをローカルストレージから取得して防壁を張る！
+   const currentCompanyId = localStorage.getItem('current_company_id');
+
+   // 🌟 2. 【超重要】「自社」の従業員だけを絞り込んで取得！！！（他社は絶対に見ない）
+   const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+   const usersSnap = await getDocs(usersQuery);
 
     for (const emp of currentSubmittedUsers) {
       const targetEmail = emp.targetEmail; // さっき付けた名札
@@ -885,7 +1069,7 @@ function toEGovDateCode(dateString: string): string {
 
 
 // ==========================================
-// 📥 資格取得届 e-Gov用 CSV一括出力ロジック
+// 📥 資格取得届 e-Gov用 CSV一括出力ロジック（🔥 SaaS完全対応版！）
 // ==========================================
 document.getElementById('btn-export-shikaku-csv')?.addEventListener('click', async () => {
   if (currentOnboardingUsers.length === 0) {
@@ -895,17 +1079,25 @@ document.getElementById('btn-export-shikaku-csv')?.addEventListener('click', asy
   
   if (!confirm(`承認済の ${currentOnboardingUsers.length} 名分の「資格取得届」を一括出力します。\n出力後、全員のステータスを「提出済」に変更しますか？`)) return;
 
+  // 🌟 追加①：ログイン中の自分の「会社ID」を取得する！
+  const currentCompanyId = localStorage.getItem('current_company_id');
+  if (!currentCompanyId) {
+    alert("エラー：会社IDが取得できませんでした。リロードしてお試しください。");
+    return;
+  }
+
   // ==========================================
-  // 🌟 1. Firebaseから最新の会社情報を取得（データ完全連携！）
+  // 🌟 2. Firebaseから最新の会社情報を取得（データ完全連携！）
   // ==========================================
   let companyMaster: any = {};
   try {
-      const docSnap = await getDoc(doc(db, 'settings', 'company'));
+      // 🌟 修正②：自分の会社IDの箱（companies/会社ID）から取得する！
+      const docSnap = await getDoc(doc(db, 'companies', currentCompanyId));
       if (docSnap.exists()) {
           companyMaster = docSnap.data();
       } else {
-          alert("⚠️ 会社情報が設定されていません。\n「法定料率・マスター」タブから事業所情報を保存してから出力してください。");
-          return; // データがない場合はここで処理をストップ！
+          alert("⚠️ 会社情報が設定されていません。\n「法定料率・会社設定」タブから事業所情報を保存してから出力してください。");
+          return; 
       }
   } catch (e) {
       console.error("会社情報の取得エラー:", e);
@@ -917,7 +1109,7 @@ document.getElementById('btn-export-shikaku-csv')?.addEventListener('click', asy
   const csvMeta = {
       mediaSeq: "001",
       creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''), // YYYYMMDD
-      repCode: "22223"
+      repCode: "22007" // 🚨 超重要！資格取得届のコード「22007」に修正しました！
   };
 
   // e-Gov専用：和暦変換エンジン（YYYY-MM-DD -> 令和YYMMDD）
@@ -933,14 +1125,38 @@ document.getElementById('btn-export-shikaku-csv')?.addEventListener('click', asy
   };
 
   // ==========================================
-  // 🌟 2. 管理レコード（[kanri] ブロック）の生成
+  // 🌟 3. 管理レコード（[kanri] ブロック）の生成（最強抽出エンジン）
   // ==========================================
-  let csvContent = `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
+  console.log("🏢 会社マスタの中身:", companyMaster);
+
+  const prefCode = companyMaster.prefCode || (companyMaster.mainBranch?.prefCode) || "";
+  const cityCode = companyMaster.cityCode || (companyMaster.mainBranch?.cityCode) || "";
+  const officeSymbol = companyMaster.officeSymbol || (companyMaster.mainBranch?.officeSymbol) || "";
+  const officeNumber = companyMaster.officeNumber || (companyMaster.mainBranch?.officeNumber) || "";
+  const address = companyMaster.address || (companyMaster.mainBranch?.address) || "";
+
+  const rawZip = companyMaster.zipCode || (companyMaster.mainBranch?.zipCode) || "";
+  const zipSplit = rawZip.split('-');
+  const zip1 = zipSplit[0] || "";
+  const zip2 = zipSplit[1] || "";
+
+  const rawTel = companyMaster.tel || companyMaster.phone || (companyMaster.mainBranch?.tel) || "";
+  const telSplit = rawTel.split('-');
+  const tel1 = telSplit[0] || "";
+  const tel2 = telSplit[1] || "";
+  const tel3 = telSplit[2] || "";
+
+  const compName = companyMaster.companyName || companyMaster.name || "";
+  const repName = companyMaster.employerName || companyMaster.representativeName || "";
+
+  // ヘッダー文字列の組み立て
+  let csvContent = `${prefCode},${cityCode},${officeSymbol},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
   csvContent += "[kanri]\n";
   csvContent += ",001\n"; 
-  csvContent += `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${companyMaster.officeNumber || ""},${companyMaster.zip1 || ""},${companyMaster.zip2 || ""},${companyMaster.address || ""},${companyMaster.companyName || ""},${companyMaster.employerName || ""},${companyMaster.tel1 || ""},${companyMaster.tel2 || ""},${companyMaster.tel3 || ""}\n`;
+  csvContent += `${prefCode},${cityCode},${officeSymbol},${officeNumber},${zip1},${zip2},${address},${compName},${repName},${tel1},${tel2},${tel3}\n`;
   csvContent += "[data]\n";
 
+  // 👇 これ以降の [data] ブロックのループ処理（2200700...など）はそのまま！
   // ローカルマスタの呼び出し（既存ロジック維持）
   const localMasterDB = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
 
@@ -982,11 +1198,11 @@ document.getElementById('btn-export-shikaku-csv')?.addEventListener('click', asy
         }
       // 仕様書完全準拠の34項目配列
       const row = [
-          "2200700",                           // 1. 様式コード（資格取得）
-          companyMaster.prefCode || "",        // 2. 都道府県コード
-          companyMaster.cityCode || "",        // 3. 郡市区符号
-          companyMaster.officeSymbol || "",    // 4. 事業所記号
-          companyMaster.officeNumber || "",    // 5. 事業所番号
+　　　　　"2200700",                           // 1. 様式コード（資格取得）
+          prefCode,                            // 2. 都道府県コード（書き換え！）
+          cityCode,                            // 3. 郡市区符号（書き換え！）
+          officeSymbol,                        // 4. 事業所記号（書き換え！）
+          officeNumber,                        // 5. 事業所番号（書き換え！）
           empid,                               // 6. 被保険者整理番号
           kana,                                // 7. 氏名カナ
           kanji,                               // 8. 氏名漢字
@@ -1025,14 +1241,21 @@ document.getElementById('btn-export-shikaku-csv')?.addEventListener('click', asy
   // ==========================================
   // 🌟 4. ダウンロード実行
   // ==========================================
-  const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-  const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
-  const link = document.createElement("a");
-  link.setAttribute("href", URL.createObjectURL(blob));
-  link.setAttribute("download", "SHFD0006.CSV");
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+// 🌟 【e-Gov完全仕様】文字列をShift-JISに変換する魔法！（資格取得版）
+const unicodeArray = Encoding.stringToCode(csvContent);
+const sjisArray = Encoding.convert(unicodeArray, {
+    to: 'SJIS',
+    from: 'UNICODE'
+});
+const uint8Array = new Uint8Array(sjisArray);
+
+const blob = new Blob([uint8Array], { type: 'text/csv;charset=Shift_JIS;' });
+const link = document.createElement("a");
+link.setAttribute("href", URL.createObjectURL(blob));
+link.setAttribute("download", "SHFD0006.CSV");
+document.body.appendChild(link);
+link.click();
+document.body.removeChild(link);
 
   // ==========================================
   // 🌟 5. ステータス更新
@@ -1079,9 +1302,37 @@ inviteForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const email = inviteEmailInput.value;
   if (inviteMsg) { inviteMsg.style.display = 'block'; inviteMsg.innerText = '✉️ 送信中...'; }
+
+  // 🌟 会社IDを取得
+  const currentCompanyId = localStorage.getItem('current_company_id');
+  if (!currentCompanyId) {
+    alert("エラー：会社IDが取得できませんでした。リロードしてお試しください。");
+    return;
+  }
+
+  // 🌟🌟🌟 【追加：SaaS防壁】ハイジャック防止の事前チェック！ 🌟🌟🌟
+  // 実際にメールを送る前に、データベースに既にこのメアドが存在するか確認する
+  const inviteRef = doc(db, 'invites', email);
+  const inviteSnap = await getDoc(inviteRef);
+
+  if (inviteSnap.exists()) {
+    // 既に存在していたら、エラーを出して処理を強制終了！
+    alert("エラー：このメールアドレスは既に他の会社で招待されているか、システムに登録済みです。");
+    if (inviteMsg) { inviteMsg.style.display = 'none'; } // 「送信中...」の文字を消す
+    return; 
+  }
+  // 🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟
+
+  // 防壁を通過した（まだどこにも登録されていない）場合のみ、メール送信と保存を実行！
   const success = await sendInviteEmail(email);
   if (success) {
-    await setDoc(doc(db, 'invites', email), { email: email, status: '未登録', invitedAt: serverTimestamp() });
+    // さっき作った inviteRef を使って保存します
+    await setDoc(inviteRef, { 
+      email: email, 
+      status: '未登録', 
+      invitedAt: serverTimestamp(),
+      companyId: currentCompanyId 
+    });
     inviteForm.reset(); 
     if (inviteMsg) { inviteMsg.style.color = '#28a745'; inviteMsg.innerText = `✓ ${email} 宛に招待メールを送信しました！`; }
   } else {
@@ -1202,24 +1453,43 @@ function updateWagesAndEligibility() {
   // ==========================================
   let isEligible = false; // 👈 NEW: 加入対象かどうかを判定するフラグを準備！
 
-  if (weeklyHours >= 30) {
-    hrEligibilityResult.innerHTML = "✅ 加入義務あり（3/4要件クリア・週30時間以上）";
-    hrEligibilityResult.style.color = "#28a745";
-    isEligible = true; // 加入する！
-  } else if (weeklyHours >= 20) {
-    if (wageFor88k >= 88000) {
-       hrEligibilityResult.innerHTML = "⚠️ 特定適用事業所の場合のみ加入対象（週20時間＆月額8.8万クリア）";
-       hrEligibilityResult.style.color = "#fd7e14";
-       isEligible = true; // 加入する！
+  // 💡 まず、画面で選ばれている「社保区分」を取得する
+  const socialInsType = hrSocialInsType ? hrSocialInsType.value : '';
+
+  if (socialInsType === 'short_time') {
+    // ----------------------------------------------------
+    // 【ケース1】短時間労働者（11日基準）を選んでいる場合
+    // ----------------------------------------------------
+    if (weeklyHours >= 20) {
+      if (wageFor88k >= 88000) {
+         hrEligibilityResult.innerHTML = "✅ 加入義務あり（短時間労働者の要件クリア：週20H以上・月額8.8万以上等）";
+         hrEligibilityResult.style.color = "#28a745";
+         isEligible = true;
+      } else {
+         hrEligibilityResult.innerHTML = "❌ 加入対象外（週20時間以上だが、月額8.8万円未満）";
+         hrEligibilityResult.style.color = "#6c757d";
+         isEligible = false;
+      }
     } else {
-       hrEligibilityResult.innerHTML = "❌ 加入対象外（週20時間以上だが、月額8.8万円未満）";
-       hrEligibilityResult.style.color = "#6c757d";
-       isEligible = false; // 加入しない！
+      hrEligibilityResult.innerHTML = "❌ 加入対象外（週所定労働時間が20時間未満）";
+      hrEligibilityResult.style.color = "#6c757d";
+      isEligible = false;
     }
+
   } else {
-    hrEligibilityResult.innerHTML = "❌ 加入対象外（週所定労働時間が20時間未満）";
-    hrEligibilityResult.style.color = "#6c757d";
-    isEligible = false; // 加入しない！
+    // ----------------------------------------------------
+    // 【ケース2】一般（17日）または パート（15日）を選んでいる場合（3/4要件）
+    // ----------------------------------------------------
+    if (weeklyHours >= 30) {
+      hrEligibilityResult.innerHTML = "✅ 加入義務あり（3/4要件クリア・週30時間以上）";
+      hrEligibilityResult.style.color = "#28a745";
+      isEligible = true;
+    } else {
+      // 30時間未満で一般・パートを選んでいる場合は、エラー的なメッセージを出す
+      hrEligibilityResult.innerHTML = "⚠️ 加入対象外（3/4要件を満たしていません。区分が『短時間労働者』ではないか確認してください）";
+      hrEligibilityResult.style.color = "#fd7e14";
+      isEligible = false;
+    }
   }
   
   // 🌟 修正：お給料があって、かつ「加入対象（isEligible が true）」の時だけ計算して表示する！
@@ -1271,7 +1541,16 @@ btnSaveContract?.addEventListener('click', async () => {
     }
   
     // 保存ボタンを押した瞬間に、メアドを元にFirebaseへIDを取りに行く
-    const usersSnapshot = await getDocs(collection(db, 'users'));
+    // 🌟 1. 会社IDを取得して防壁を張る！
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) {
+        return alert("会社情報が読み込めません。");
+    }
+
+    // 🌟 2. 【超重要】「自社の従業員」だけを絞り込んでIDを取りに行く！
+    const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+    const usersSnapshot = await getDocs(usersQuery);
+
     let targetId: string | null = null;
     usersSnapshot.forEach((uSnap) => {
       const d = uSnap.data();
@@ -1357,14 +1636,6 @@ async function loadSalaryTab() {
       initSubTabEvents();      // サブタブ切り替えを有効化
       initMonthlySalaryUI();   // 月額給与のロジックを起動
       initBonusUI();           // 💡 賞与のロジックもここで一緒に起動する！
-      // 🌟 算定基礎（※まだプルダウンがない場合は '' でOK。追加したら 'santei-type-filter' などに変える）
-      initSalaryFilterUI('btn-santei-active', 'btn-santei-retired', 'santei-emp-filter', initSanteiUI);
-            
-      // 🌟 賞与（※こちらも同じく）
-      initSalaryFilterUI('btn-bonus-active', 'btn-bonus-retired', 'santei-emp-filter', initBonusUI);
-
-      // 🌟 随時改定 / 給与実績（先ほど追加したプルダウンのIDを指定！）
-      initSalaryFilterUI('btn-monthly-active', 'btn-monthly-retired', 'salary-emp-filter', initMonthlySalaryUI);      initSanteiUI();
       initSalarySlipUI();
     } catch (error) {
       console.error('HTMLのコンポーネント読み込みエラー:', error);
@@ -1397,61 +1668,64 @@ async function loadEmployeeListTab() {
 // ==========================================
 // 🌟 給与タブ共通：在籍中/退職済 ＋ 区分 フィルター制御
 // ==========================================
-// 🌟 引数に selectId（プルダウンのID）を追加！
-// 🌟 引数に selectId（プルダウンのID）を追加！
-export function initSalaryFilterUI(activeId: string, retiredId: string, selectId: string, reRenderCallback: () => void) {
+// 🌟 修正：引数に「storageKey」を追加して、タブごとにお化けを切り離す！
+export function initSalaryFilterUI(
+  activeId: string, 
+  retiredId: string, 
+  selectId: string, 
+  storageKey: string, 
+  reRenderCallback: () => void
+) {
   const btnActive = document.getElementById(activeId);
   const btnRetired = document.getElementById(retiredId);
   const selectType = document.getElementById(selectId) as HTMLSelectElement;
-  
-  // ボタンが見つからなければ何もしない（エラー防止）
-  if (!btnActive || !btnRetired) return;
 
-  // 1️⃣ localStorageから現在の状態を復元（なければ初期値）
-  const currentStatusFilter = localStorage.getItem('salaryFilter') || 'active';
-  const currentTypeFilter = localStorage.getItem('salaryTypeFilter') || 'all'; // 🌟 NEW: 区分フィルターの状態
+  // 🚨 犯人だった「道連れ return」は削除しました！
 
-  // 🎨 ボタンの色を更新する関数
-  const updateStyle = (filter: string) => {
-    if (filter === 'retired') {
-      // 🌟 修正：退職が選ばれたら、退職ボタンを「青」にして、在籍ボタンを「グレー」にする！
-      btnRetired.style.background = '#0056b3'; btnRetired.style.color = 'white'; 
-      btnActive.style.background = '#e0e0e0'; btnActive.style.color = '#555';
-    } else {
-      // 在籍が選ばれたら、在籍ボタンを「青」にして、退職ボタンを「グレー」にする！
-      btnActive.style.background = '#0056b3'; btnActive.style.color = 'white'; 
-      btnRetired.style.background = '#e0e0e0'; btnRetired.style.color = '#555';
-    }
-  };
-  
-  // 画面を開いた瞬間に色を塗る
-  updateStyle(currentStatusFilter);
+  const statusFilterKey = `${storageKey}_status`;
+  const typeFilterKey = `${storageKey}_type`;
 
-  // 🌟 NEW: プルダウンの初期値をセット
+  // =========================================================
+  // 💡 ① プルダウン（区分）が見つかったら、単独でイベントをセット！
+  // =========================================================
   if (selectType) {
-    selectType.value = currentTypeFilter;
+    selectType.value = localStorage.getItem(typeFilterKey) || 'all';
     
-    // プルダウンが変更された時の処理
     selectType.addEventListener('change', (e) => {
       const selectedValue = (e.target as HTMLSelectElement).value;
-      localStorage.setItem('salaryTypeFilter', selectedValue); // 状態を保存
-      reRenderCallback(); // 予約されていた画面再描画を実行！
+      localStorage.setItem(typeFilterKey, selectedValue); 
+      reRenderCallback(); 
     });
   }
 
-  // 在籍ボタンの処理
-  btnActive.addEventListener('click', () => {
-    localStorage.setItem('salaryFilter', 'active');
-    updateStyle('active');
-    reRenderCallback();
-  });
+  // =========================================================
+  // 💡 ② 在籍・退職ボタンが見つかったら、単独でイベントをセット！
+  // =========================================================
+  if (btnActive && btnRetired) {
+    const updateStyle = (filter: string) => {
+      if (filter === 'retired') {
+        btnRetired.style.background = '#0056b3'; btnRetired.style.color = 'white'; 
+        btnActive.style.background = '#e0e0e0'; btnActive.style.color = '#555';
+      } else {
+        btnActive.style.background = '#0056b3'; btnActive.style.color = 'white'; 
+        btnRetired.style.background = '#e0e0e0'; btnRetired.style.color = '#555';
+      }
+    };
+    
+    updateStyle(localStorage.getItem(statusFilterKey) || 'active');
 
-  // 退職ボタンの処理
-  btnRetired.addEventListener('click', () => {
-    localStorage.setItem('salaryFilter', 'retired');
-    updateStyle('retired');
-    reRenderCallback();
-  });
+    btnActive.addEventListener('click', () => {
+      localStorage.setItem(statusFilterKey, 'active');
+      updateStyle('active');
+      reRenderCallback();
+    });
+
+    btnRetired.addEventListener('click', () => {
+      localStorage.setItem(statusFilterKey, 'retired');
+      updateStyle('retired');
+      reRenderCallback();
+    });
+  }
 }
 
 
@@ -1507,12 +1781,20 @@ const lifeEventTabBtn = document.querySelector('[data-tab="tab-life-event"]');
 // ✅ タスク管理タブの描画・操作エンジン（e-Gov完全対応版）
 // ==========================================
 function initTaskUI() {
-  let tasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
+  // 🌟 1. 会社IDを取得！
+  const currentCompanyId = localStorage.getItem('current_company_id');
+  if (!currentCompanyId) return;
+
+  // 🌟 2. 会社別のキー名を作る！
+  const taskKey = `hr_tasks_${currentCompanyId}`;
+  const empMasterKey = `hr_employee_master_${currentCompanyId}`;
+
+  // 🌟 3. 会社専用の箱から読み込む！
+  let tasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
   let currentFilter = 'all';
   let currentSort = 'deadline';
-// 🌟 本物の従業員マスターデータをDB(LocalStorage)から読み込む！
-const employeeMasterDB: Record<string, any> = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
-
+  // 🌟 本物の従業員マスターデータも会社専用の箱から読み込む！
+  const employeeMasterDB: Record<string, any> = JSON.parse(localStorage.getItem(empMasterKey) || '{}');
 
   // 💡 魔法②：e-Gov用 和暦変換エンジン（西暦を「令和X年X月X日」に変換）
   const toJapaneseEra = (dateString: string) => {
@@ -1725,125 +2007,354 @@ const openMemoModal = () => {
         return;
       }
     
-      // 🟢 修正後のコード（すべてStringの文字列として比較する！）
-      const idsToMove = Array.from(checkedBoxes).map(cb => String(cb.getAttribute('data-id')));
-      const tasksToMove = tasks.filter((t: any) => idsToMove.includes(String(t.id)));
-    
+// 🟢 修正後のコード（すべてStringの文字列として比較する！）
+const idsToMove = Array.from(checkedBoxes).map(cb => String(cb.getAttribute('data-id')));
+const tasksToMove = tasks.filter((t: any) => idsToMove.includes(String(t.id)));
+
+// 👇👇👇 🌟🌟🌟 ここからX線診断コードを挿入！ 🌟🌟🌟 👇👇👇
+console.log("🕵️‍♂️==== エンジン内部診断スタート ====");
+console.log("① 受け取った移動先 (toStatus):", toStatus);
+console.log("② 取得したタスク:", tasksToMove);
+if (tasksToMove.length > 0) {
+  const t = tasksToMove[0];
+  console.log(`③ タスクの状態 -> タイトル: ${t.title}, 現在のstatus: ${t.status}`);
+  
+  // 戻す時の判定（免除OFF）がどうなっているかチェック
+  const isRevertingExemption = (t.status === 'done' && toStatus !== 'done' && t.title.includes('育児休業等取得者申出書'));
+  console.log(`④ 免除OFF判定 -> クリアしてる？: ${isRevertingExemption}`);
+}
+console.log("🕵️‍♂️===============================");
+// 👆👆👆 🌟🌟🌟 ここまで 🌟🌟🌟 👆👆👆
       let shouldMove = true;
     
-      // 1️⃣ 🌟 社会保険料を「免除（0円）」に設定したい対象 (ONにする)
-      // パターンA: 育休開始届を「完了」にしたとき
-      // パターンB: 復職タスクを完了から「未完了に戻した」とき（やっぱりまだ復職してなかった！）
-      const turnOnTasks = tasksToMove.filter((t: any) => {
-        const isCompletingExemption = (toStatus === 'done' && t.status !== 'done' && t.title.includes('育児休業等取得者申出書'));
-        const isRevertingReinstatement = (t.status === 'done' && toStatus !== 'done' && t.title.includes('復職に伴う社会保険料の控除再開'));
-        return isCompletingExemption || isRevertingReinstatement;
-      });
+ // 1️⃣ 🌟 社会保険料を「免除（0円）」に設定したい対象 (ONにする)
+ const turnOnTasks = tasksToMove.filter((t: any) => {
+  // 🌟 異物混入を防ぐ最強の文字列サニタイズ（見えないスペースを破壊！）
+  const safeStatus = String(t.status || '').trim();
+  const safeTitle = String(t.title || '');
+  
+  // 🌟 タイトルは「育児休業等」だけで部分一致させる（全角半角のブレを完全回避）
+  const isCompletingExemption = (toStatus === 'done' && safeStatus !== 'done' && safeTitle.includes('育児休業等'));
+  const isRevertingReinstatement = (safeStatus === 'done' && toStatus !== 'done' && safeTitle.includes('控除再開'));
+  
+  return isCompletingExemption || isRevertingReinstatement;
+});
+
+// 2️⃣ 🌟 社会保険料の免除を解除し、「通常徴収」に戻したい対象 (OFFにする)
+const turnOffTasks = tasksToMove.filter((t: any) => {
+  const safeStatus = String(t.status || '').trim();
+  const safeTitle = String(t.title || '');
+  
+  const isCompletingReinstatement = (toStatus === 'done' && safeStatus !== 'done' && safeTitle.includes('控除再開'));
+  const isRevertingExemption = (safeStatus === 'done' && toStatus !== 'done' && safeTitle.includes('育児休業等'));
+  
+  return isCompletingReinstatement || isRevertingExemption;
+});
     
-      // 2️⃣ 🌟 社会保険料の免除を解除し、「通常徴収」に戻したい対象 (OFFにする)
-      // パターンA: 復職タスクを「完了」にしたとき（無事に復職した！）
-      // パターンB: 育休開始届を完了から「未完了に戻した」とき（操作ミスの取消）
-      const turnOffTasks = tasksToMove.filter((t: any) => {
-        const isCompletingReinstatement = (toStatus === 'done' && t.status !== 'done' && t.title.includes('復職に伴う社会保険料の控除再開'));
-        const isRevertingExemption = (t.status === 'done' && toStatus !== 'done' && t.title.includes('育児休業等取得者申出書'));
-        return isCompletingReinstatement || isRevertingExemption;
-      });
-    
-      // 🟢 免除ON（0円）の処理
-      if (turnOnTasks.length > 0) {
-        const names = turnOnTasks.map((t: any) => t.empName).join('、');
-        if (confirm(`【⚠️ 免除設定の確認】\n${names} さんの設定を変更します。\n社会保険料を「免除（0円）」に設定してよろしいですか？`)) {
-          try {
-            if (target) { target.innerText = '処理中...'; target.disabled = true; }
-            const usersSnap = await getDocs(collection(db, 'users'));
-            for (const task of turnOnTasks) {
-              let targetDocId = null;
-              usersSnap.forEach((u: any) => {
-                const data = u.data();
-                const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
-                if (fullName === task.empName || data.employeeId === task.empName) targetDocId = u.id;
-              });
-              if (targetDocId) await updateDoc(doc(db, 'users', targetDocId), { isSocialInsuranceExempt: true });
-            }
-          } catch (e) { alert('エラーが発生しました'); shouldMove = false; }
-        } else { shouldMove = false; }
+// 🟢 免除ON（0円）の処理
+if (turnOnTasks.length > 0) {
+  const names = turnOnTasks.map((t: any) => t.empName).join('、');
+  if (confirm(`【⚠️ 免除設定の確認】\n${names} さんの設定を変更します。\n社会保険料を「免除（0円）」に設定してよろしいですか？`)) {
+
+    try {
+      if (target) { target.innerText = '処理中...'; target.disabled = true; }
+      
+      // 🌟 【防壁】自社の従業員だけで絞り込む！
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) throw new Error("会社IDがありません");
+      
+      const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+      const usersSnap = await getDocs(usersQuery);
+      
+      for (const task of turnOnTasks) {
+        let targetDocId = null;
+        usersSnap.forEach((u: any) => {
+          const data = u.data();
+          const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+          
+          // 🌟 最強の照合ロジック：ID優先 ＋ 名前バックアップ
+          const isMatchById = (task.employeeId && data.employeeId === task.employeeId) || 
+                              (task.userId && u.id === task.userId) ||
+                              (task.empId && data.employeeId === task.empId);
+          const isMatchByName = (fullName === task.empName || data.employeeId === task.empName);
+
+          if (isMatchById || isMatchByName) {
+            targetDocId = u.id;
+          }
+        });
+        if (targetDocId) await updateDoc(doc(db, 'users', targetDocId), { isSocialInsuranceExempt: true });
       }
-    
-      // 🔴 免除OFF（徴収再開）の処理
-      if (shouldMove && turnOffTasks.length > 0) {
-        const names = turnOffTasks.map((t: any) => t.empName).join('、');
+    } catch (e) { alert('エラーが発生しました'); shouldMove = false; }
+  } else { shouldMove = false; }
+}
 
-        // 🌟 ここから変更：親切でわかりやすい警告文を作成
-        const confirmMsg = `【🔄 控除再開（免除の解除）の確認】\n` +
-        `${names} さんの社会保険料を「通常徴収」に戻しますか？\n\n` +
-        `⚠️ 注意 ⚠️\n` +
-        `この操作を行うと、システム上ですぐに保険料の徴収設定が再開されます。\n` +
-        `（例：6月支給の給与から天引きを再開したい場合は、6月の給与計算を行うタイミングでこのタスクを完了にしてください）\n\n` +
-        `今すぐ設定を変更してもよろしいですか？`;
+// 🔴 免除OFF（徴収再開）の処理
+if (shouldMove && turnOffTasks.length > 0) {
+const names = turnOffTasks.map((t: any) => t.empName).join('、');
 
+// 🌟 ここから変更：親切でわかりやすい警告文を作成
+const confirmMsg = `【🔄 控除再開（免除の解除）の確認】\n` +
+`${names} さんの社会保険料を「通常徴収」に戻しますか？\n\n` +
+`⚠️ 注意 ⚠️\n` +
+`この操作を行うと、システム上ですぐに保険料の徴収設定が再開されます。\n` +
+`（例：6月支給の給与から天引きを再開したい場合は、6月の給与計算を行うタイミングでこのタスクを完了にしてください）\n\n` +
+`今すぐ設定を変更してもよろしいですか？`;
 
+if (confirm(confirmMsg)) {
+try {
+  if (target) { target.innerText = '処理中...'; target.disabled = true; }
+  
+  // 🌟 【防壁】危険なバックドア（全社取得）を完全に塞ぐ！
+  const currentCompanyId = localStorage.getItem('current_company_id');
+  if (!currentCompanyId) throw new Error("会社IDがありません");
+  
+  const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+  const usersSnap = await getDocs(usersQuery);
 
-        if (confirm(confirmMsg)) {
-          try {
-            if (target) { target.innerText = '処理中...'; target.disabled = true; }
-            const usersSnap = await getDocs(collection(db, 'users'));
-            for (const task of turnOffTasks) {
-              let targetDocId = null;
-              usersSnap.forEach((u: any) => {
-                const data = u.data();
-                const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
-                if (fullName === task.empName || data.employeeId === task.empName) targetDocId = u.id;
-              });
-              if (targetDocId) await updateDoc(doc(db, 'users', targetDocId), { isSocialInsuranceExempt: false });
-            }
-          } catch (e) { alert('エラーが発生しました'); shouldMove = false; }
-        } else { shouldMove = false; }
+  for (const task of turnOffTasks) {
+    let targetDocId: string | null = null; 
+    usersSnap.forEach((u: any) => {
+      const data = u.data();
+      const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+      
+      // 🌟 最強の照合ロジック：ID優先 ＋ 名前バックアップ
+      const isMatchById = (task.employeeId && data.employeeId === task.employeeId) || 
+                          (task.userId && u.id === task.userId) ||
+                          (task.empId && data.employeeId === task.empId);
+      const isMatchByName = (fullName === task.empName || data.employeeId === task.empName);
+
+      if (isMatchById || isMatchByName) {
+        targetDocId = u.id;
       }
-    
-        // 🌟🌟🌟 追加 2：免除判定が終わった後、絶対にボタンを元の状態に復活させる！
-        if (target) {
-          target.innerText = originalText;
-          target.disabled = false;
-        }
+    });
+    if (targetDocId) await updateDoc(doc(db, 'users', targetDocId), { isSocialInsuranceExempt: false });
+  }
+} 
+catch (e) { alert('エラーが発生しました'); shouldMove = false; }
+} else { shouldMove = false; }
+}
 
-        // 最後の移動処理
-        if (shouldMove) {
-        tasks = tasks.map((t: any) => idsToMove.includes(String(t.id)) ? { ...t, status: toStatus } : t);
-        localStorage.setItem('hr_tasks', JSON.stringify(tasks));
-        if (toStatus === 'done') {
-          tasks.forEach((t: any) => {
-              if (idsToMove.includes(String(t.id))) {
-                  checkAndProcessRetirementTask(t);
+// ==========================================
+// 🟡 パターンC：扶養家族を外す（論理削除）処理（完全防弾版！）
+// ==========================================
+const removeDependentTasks = tasksToMove.filter((t: any) => {
+  const safeStatus = String(t.status || '').trim();
+  const safeTitle = String(t.title || '');
+  
+  // 🌟 防弾1：カッコの全角半角ブレを無視！「被扶養者」と「減少」の両方が含まれていればヨシとする
+  return toStatus === 'done' && safeStatus !== 'done' && safeTitle.includes('被扶養者') && safeTitle.includes('減少');
+});
+
+if (shouldMove && removeDependentTasks.length > 0) {
+  const names = removeDependentTasks.map((t: any) => t.empName).join('、');
+  
+  if (confirm(`【👨‍👩‍👧‍👦 扶養喪失手続きの確認】\n${names} さんの家族を扶養から外す処理（システム上の非表示化）を実行しますか？`)) {
+    try {
+      if (target) { target.innerText = '処理中...'; target.disabled = true; }
+      
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) throw new Error("会社IDがありません");
+      
+      const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+      const usersSnap = await getDocs(usersQuery);
+
+      for (const task of removeDependentTasks) {
+        let targetDocId: string | null = null; 
+        usersSnap.forEach((u: any) => {
+          const data = u.data();
+          const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+          
+          const isMatchById = (task.employeeId && data.employeeId === task.employeeId) || 
+                              (task.userId && u.id === task.userId) ||
+                              (task.empId && data.employeeId === task.empId);
+          const isMatchByName = (fullName === task.empName || data.employeeId === task.empName);
+
+          if (isMatchById || isMatchByName) {
+            targetDocId = u.id;
+          }
+        });
+
+        if (targetDocId) {
+          const userRef = doc(db, 'users', targetDocId);
+          const userDocSnap = await getDoc(userRef);
+          const userData = userDocSnap.data();
+
+          if (userData && userData.dependents && Array.isArray(userData.dependents)) {
+            
+            // 🌟 防弾2：タスク側の「対象者名」からすべてのスペースを強制消去！
+            const rawTargetName = task.targetFamilyName || (task.originalData && task.originalData.targetFamilyName) || task.memo || '';
+            const cleanTargetName = String(rawTargetName).replace(/[\s ]+/g, ''); // 半角・全角スペースを撲滅
+
+            const updatedDependents = userData.dependents.map((dep: any) => {
+              // 🌟 防弾3：DB側の「家族名」からもすべてのスペースを強制消去！
+              const cleanDepName = `${dep.lastNameKanji || ''}${dep.firstNameKanji || ''}`.replace(/[\s ]+/g, '');
+              
+              // スペース無しの純粋な文字だけで比較！一致したら論理削除フラグを立てる！
+              if (cleanTargetName && cleanDepName && cleanTargetName.includes(cleanDepName)) {
+                return { 
+                  ...dep, 
+                  isRemoved: true, 
+                  removedDate: new Date().toISOString() 
+                };
               }
-          });
+              return dep;
+            });
+
+            // データベースを更新！
+            await updateDoc(userRef, { dependents: updatedDependents });
+            console.log("✅ 家族の論理削除（isRemoved: true）を完了しました！");
+          }
         }
-        renderTasks();
-      } else {
-        renderTasks();
       }
-    };
-
-
-    // HTMLで追加した一括ボタンに、この神エンジンを紐付ける！
-    // 修正箇所：(e) を受け取って、executeBulkMove に渡すようにします
-    const btnBulkDoing = document.getElementById('btn-bulk-doing');
-    if (btnBulkDoing) {
-      btnBulkDoing.replaceWith(btnBulkDoing.cloneNode(true));
-      document.getElementById('btn-bulk-doing')?.addEventListener('click', (e) => executeBulkMove('doing', e));
+    } catch (e) {
+      alert('エラーが発生しました');
+      console.error(e);
+      shouldMove = false; 
     }
+  } else {
+    shouldMove = false;
+  }
+}
 
-    const btnBulkDone = document.getElementById('btn-bulk-done');
-    if (btnBulkDone) {
-      btnBulkDone.replaceWith(btnBulkDone.cloneNode(true));
-      document.getElementById('btn-bulk-done')?.addEventListener('click', (e) => executeBulkMove('done', e));
+
+
+// ==========================================
+// 🟣 パターンD：退職処理（従業員マスタを退職済みに移動）
+// ==========================================
+const retirementTasks = tasksToMove.filter((t: any) => {
+  const safeStatus = String(t.status || '').trim();
+  const safeTitle = String(t.title || '');
+  // 🌟 カッコなどのブレを防ぐため、「資格喪失」という最強キーワードだけで検知！
+  return toStatus === 'done' && safeStatus !== 'done' && safeTitle.includes('資格喪失');
+});
+
+if (shouldMove && retirementTasks.length > 0) {
+  const names = retirementTasks.map((t: any) => t.empName).join('、');
+  
+  // 🌟 実行前に確認ダイアログを出すことで、労務の誤操作を防止！
+  if (confirm(`【🚪 退職処理の自動連携】\n${names} さんの資格喪失手続きが完了しました。\n従業員マスタを「退職済」タブに自動移動させますか？`)) {
+    try {
+      if (target) { target.innerText = '処理中...'; target.disabled = true; }
+      
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) throw new Error("会社IDがありません");
+      
+      const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+      const usersSnap = await getDocs(usersQuery);
+
+      for (const task of retirementTasks) {
+        let targetDocId: string | null = null; 
+        
+        usersSnap.forEach((u: any) => {
+          const data = u.data();
+          const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+          
+          // 🌟 防弾仕様：スペースを完全に除去して純粋な文字だけで比較！
+          const cleanFullName = fullName.replace(/[\s ]+/g, '');
+          const cleanTaskName = String(task.empName || '').replace(/[\s ]+/g, '');
+          
+          const isMatchById = (task.employeeId && data.employeeId === task.employeeId) || 
+                              (task.userId && u.id === task.userId) ||
+                              (task.empId && data.employeeId === task.empId);
+          const isMatchByName = (cleanFullName === cleanTaskName || data.employeeId === task.empName);
+
+          if (isMatchById || isMatchByName) {
+            targetDocId = u.id;
+          }
+        });
+
+        // 🌟 対象者が見つかったら「退職済（retired）」に書き換える！
+        if (targetDocId) {
+          await updateDoc(doc(db, 'users', targetDocId), {
+            employeeStatus: 'retired', 
+            resignationDate: task.deadline || new Date().toISOString().split('T')[0]
+          });
+          console.log(`✅ ${task.empName} さんを「退職済」に自動更新しました！`);
+        }
+      }
+      
+      // 更新完了のアラート
+      setTimeout(() => {
+        alert(`🚪 従業員マスタを「退職済」に更新しました！`);
+      }, 300);
+
+    } catch (e) {
+      alert('退職処理中にエラーが発生しました');
+      console.error(e);
+      shouldMove = false; 
     }
+  } else {
+    // キャンセルした場合はタスクの移動自体を取りやめる
+    shouldMove = false;
+  }
+}
 
-    const btnBulkRevert = document.getElementById('btn-bulk-revert');
-    if (btnBulkRevert) {
-      btnBulkRevert.replaceWith(btnBulkRevert.cloneNode(true));
-      document.getElementById('btn-bulk-revert')?.addEventListener('click', (e) => executeBulkMove('doing', e));
-    }
 
+
+// 🌟🌟🌟 追加 2：免除判定が終わった後、絶対にボタンを元の状態に復活させる！
+if (target) {
+  target.innerText = originalText;
+  target.disabled = false;
+}
+
+// 最後の移動処理
+if (shouldMove) {
+  // 🌟 修正3：保存先をSaaS化（名前衝突を避けるため、別名「finalTaskKey」を使用！）
+  const finalCompanyId = localStorage.getItem('current_company_id');
+  const finalTaskKey = finalCompanyId ? `hr_tasks_${finalCompanyId}` : 'hr_tasks';
+
+  tasks = tasks.map((t: any) => idsToMove.includes(String(t.id)) ? { ...t, status: toStatus } : t);
+  
+  // 🌟 ここを専用キーに変更！
+  localStorage.setItem(finalTaskKey, JSON.stringify(tasks));
+  
+  if (toStatus === 'done') {
+    tasks.forEach((t: any) => {
+        if (idsToMove.includes(String(t.id))) {
+            checkAndProcessRetirementTask(t);
+        }
+    });
+  }
+  renderTasks();
+} else {
+  renderTasks();
+}
+
+};
+
+
+// ==========================================
+      // 🌟 最強の配線：「戻す」ボタンの文字検知対応版！
+      // ==========================================
+      
+      (window as any).globalBulkEngine = executeBulkMove;
+
+      if (!(window as any).isBulkEngineWired) {
+          document.addEventListener('click', (e) => {
+              const target = e.target as HTMLElement;
+              
+              const btn = target.closest('button, a, .btn, [class*="btn"]');
+              if (!btn) return;
+
+              const text = (btn as HTMLElement).innerText || "";
+              const fakeEvent = { currentTarget: btn } as unknown as Event;
+
+              if (text.includes('完了')) {
+                  e.preventDefault();
+                  console.log("🚀 完了エンジン点火！！", text);
+                  (window as any).globalBulkEngine('done', fakeEvent);
+              }
+              // 🎯 修正ポイント：ボタンの文字が「進行中」または「戻す」だったら作動する！
+              else if (text.includes('進行中') || text.includes('戻す')) {
+                  e.preventDefault();
+                  console.log("🚀 進行中（戻す）エンジン点火！！", text);
+                  (window as any).globalBulkEngine('doing', fakeEvent);
+              }
+          }, true);
+          
+          (window as any).isBulkEngineWired = true;
+      }
+      // ==========================================
 
 
 
@@ -1860,21 +2371,31 @@ document.querySelectorAll('.btn-notify').forEach(btn => {
     }
     // 👇 🌟 この1行を追加！！（TSを安心させる魔法のコード）
     if (!empName || !taskTitle) return;
-    // 確認ダイアログを出す
-    if (!confirm(`${empName} さんへ以下の通知を送りますか？\n「${taskTitle}」`)) return;
 
-    try {
-      targetBtn.innerText = '⏳ 送信中...';
-      targetBtn.disabled = true;
 
-      // 🌟 変更後（個別・一括ともに、このように title を追加して保存します）
-      await addDoc(collection(db, 'notifications'), {
-        targetEmpName: empName,
-        title: taskTitle, // 👈 🌟 ここを追加！（普段表示する短いタイトル）
-        message: generateNotificationMessage(taskTitle, empName), // 👈 （ダブルタップで出す長い案内文）
-        isRead: false,
-        createdAt: serverTimestamp()
-      });
+// 👇 🌟 ここから差し替え！（元々の confirm を window.prompt に変更します）
+        // 自由記述メッセージの入力ダイアログを出す
+        const customMessage = window.prompt(
+            `${empName} さんへ送る通知メッセージを入力してください：\n（※キャンセルを押すと送信されません）`, 
+            generateNotificationMessage(taskTitle, empName) // 👈 これがデフォルトの定型文として最初から入力されます！
+        );
+
+        // キャンセルが押された、または空欄の場合はストップ
+        if (!customMessage) return; 
+
+        try {
+            targetBtn.innerText = '⌛ 送信中...';
+            targetBtn.disabled = true;
+            
+            // 🌟 変更後：入力された customMessage をそのまま保存します！
+            await addDoc(collection(db, 'notifications'), {
+                targetEmpName: empName,
+                title: taskTitle,
+                message: customMessage, // 👈 🌟 ここが最大のポイント！
+                isRead: false,
+                createdAt: serverTimestamp()
+            });
+            // 👆 🌟 差し替えここまで！
 
       // 送信成功UI
       targetBtn.innerText = '✅ 送信済み';
@@ -1913,13 +2434,17 @@ if (btnSaveMemo && memoModal) {
     const taskId = Number(idInput.value);
     const newMemo = textarea.value.trim();
 
-    // ローカルストレージのタスクを更新
-    let tasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
+    // 🌟 会社IDと専用キーを取得！
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    const taskKey = currentCompanyId ? `hr_tasks_${currentCompanyId}` : 'hr_tasks';
+
+    // ローカルストレージのタスクを更新（専用キーで読み込み！）
+    let tasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
     const taskIndex = tasks.findIndex((t: any) => t.id === taskId);
-    
+
     if (taskIndex > -1) {
       tasks[taskIndex].memo = newMemo; // メモを上書き！
-      localStorage.setItem('hr_tasks', JSON.stringify(tasks));
+      localStorage.setItem(taskKey, JSON.stringify(tasks)); // 🌟 専用キーで保存！
       
       memoModal.style.display = 'none';
       
@@ -1952,8 +2477,12 @@ if (btnBulkNotify) {
       return;
     }
 
-    // 2. ローカルストレージから全タスクデータを取得（先に取得してチェックに使います）
-    const tasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
+      // 🌟 会社IDを取得して専用キーを作成
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      const taskKey = currentCompanyId ? `hr_tasks_${currentCompanyId}` : 'hr_tasks';
+
+      // 2. ローカルストレージから全タスクデータを取得（専用キーで読み込み！）
+      const tasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
     
     // 3. 選択されたタスクのデータをすべて抽出
     const selectedTasks = Array.from(checkedBoxes).map(cb => {
@@ -2070,7 +2599,7 @@ if (oldExportBtn) {
       alert('出力するタスクをチェックボックスで選択してください。');
       return;
     }
-
+    　　let isCsvExported = false;
     // 竹高さんの完璧な既存ロジックを利用してタスクを抽出
     const checkedIds = Array.from(checkedBoxes).map(cb => Number(cb.getAttribute('data-id')));
     const exportTasks = tasks.filter((t: any) => checkedIds.includes(t.id));
@@ -2135,81 +2664,121 @@ if (oldExportBtn) {
     
     if (sankyuTasks.length > 0) {
         try {
-            // 1. Firebaseから会社情報を取得
-            let companyMaster: any = {};
-            const docSnap = await getDoc(doc(db, 'settings', 'company'));
-            if (docSnap.exists()) {
-                companyMaster = docSnap.data();
-            } else {
-                alert("⚠️ 会社情報が設定されていません。「法定料率・マスター」タブで保存してください。");
-                return;
-            }
+    // 🌟 1. 会社IDをローカルストレージから取得！
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) {
+        alert("会社情報が読み込めません。");
+        return;
+    }
 
-            // 2. Firestoreの全ユーザー情報を取得
-            const usersSnap = await getDocs(collection(db, 'users'));
-            const firestoreUsersMap: any = {};
-            usersSnap.forEach((d) => {
-                const data = d.data();
-                const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
-                firestoreUsersMap[fullName] = data;
-                firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
-            });
-            const localMasterDB = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
+    // 🌟 2. 【修正】会社情報マスタを「自社専用の箱」から取得！
+    let companyMaster: any = {};
+    const docSnap = await getDoc(doc(db, 'companies', currentCompanyId));
+    if (docSnap.exists()) {
+        companyMaster = docSnap.data();
+    } else {
+        alert("⚠️ 会社情報が設定されていません。「法定料率・マスター」タブで保存してください。");
+        return;
+    }
 
+    // 🌟 3. 【超重要】必ず「自社の従業員」だけで絞り込んで取得！！！
+    const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+    const usersSnap = await getDocs(usersQuery);
+
+    const firestoreUsersMap: any = {};
+    usersSnap.forEach((d) => {
+        const data = d.data();
+        const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+        firestoreUsersMap[fullName] = data;
+        firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
+    });
+    const localMasterDB = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
+
+// ==========================================
+            // 🌟 1. e-Gov用メタデータと和暦エンジン
+            // ==========================================
             const csvMeta = {
-                mediaSeq: "001",
-                creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
-                repCode: "22223"
-            };
+              mediaSeq: "001",
+              creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
+              repCode: "22737" // 🔥 修正：産前産後休業申出書のコードは「22737」！
+          };
 
-            const getEgoveDate = (dateStr: string) => {
-                if (!dateStr) return { gengo: "", date: "" };
-                const d = new Date(dateStr);
-                const y = d.getFullYear();
-                const m = String(d.getMonth() + 1).padStart(2, '0');
-                const day = String(d.getDate()).padStart(2, '0');
-                if (y >= 2019) return { gengo: "9", date: String(y - 2018).padStart(2, '0') + m + day };
-                if (y >= 1989) return { gengo: "7", date: String(y - 1988).padStart(2, '0') + m + day };
-                return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
-            };
+          const getEgoveDate = (dateStr: string) => {
+              if (!dateStr) return { gengo: "", date: "" };
+              const d = new Date(dateStr);
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              if (y >= 2019) return { gengo: "9", date: String(y - 2018).padStart(2, '0') + m + day };
+              if (y >= 1989) return { gengo: "7", date: String(y - 1988).padStart(2, '0') + m + day };
+              return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
+          };
 
-            // 管理レコード生成
-            let csvContent = `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
-            csvContent += "[kanri]\n,001\n";
-            csvContent += `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${companyMaster.officeNumber || ""},${companyMaster.zip1 || ""},${companyMaster.zip2 || ""},${companyMaster.address || ""},${companyMaster.companyName || ""},${companyMaster.employerName || ""},${companyMaster.tel1 || ""},${companyMaster.tel2 || ""},${companyMaster.tel3 || ""}\n`;
-            csvContent += "[data]\n";
+          // ==========================================
+          // 🌟 2. 会社情報の最強抽出エンジン（産休届にも搭載！）
+          // ==========================================
+          const prefCode = companyMaster.prefCode || (companyMaster.mainBranch?.prefCode) || "";
+          const cityCode = companyMaster.cityCode || (companyMaster.mainBranch?.cityCode) || "";
+          const officeSymbol = companyMaster.officeSymbol || (companyMaster.mainBranch?.officeSymbol) || "";
+          const officeNumber = companyMaster.officeNumber || (companyMaster.mainBranch?.officeNumber) || "";
+          const address = companyMaster.address || (companyMaster.mainBranch?.address) || "";
 
-            let exportCount = 0;
+          const rawZip = companyMaster.zipCode || (companyMaster.mainBranch?.zipCode) || "";
+          const zipSplit = rawZip.split('-');
+          const zip1 = zipSplit[0] || "";
+          const zip2 = zipSplit[1] || "";
 
-            for (const targetTask of sankyuTasks) {
-                const targetEmpName = targetTask.empName.trim();
-                const localData = localMasterDB[targetEmpName] || localMasterDB[targetEmpName.replace(/\s+/g, '')] || {};
-                const cloudData = firestoreUsersMap[targetEmpName] || firestoreUsersMap[targetEmpName.replace(/\s+/g, '')] || {};
+          const rawTel = companyMaster.tel || companyMaster.phone || (companyMaster.mainBranch?.tel) || "";
+          const telSplit = rawTel.split('-');
+          const tel1 = telSplit[0] || "";
+          const tel2 = telSplit[1] || "";
+          const tel3 = telSplit[2] || "";
 
-                if (Object.keys(localData).length === 0 && Object.keys(cloudData).length === 0) continue;
+          const compName = companyMaster.companyName || companyMaster.name || "";
+          const repName = companyMaster.employerName || companyMaster.representativeName || "";
 
-                // 🌟 今回は全33項目！空文字で初期化してカンマのズレを完全防御！
-                const row = Array(33).fill("");
+          // ==========================================
+          // 🌟 3. 管理レコード（[kanri]ブロック）生成
+          // ==========================================
+          let csvContent = `${prefCode},${cityCode},${officeSymbol},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
+          csvContent += "[kanri]\n,001\n";
+          csvContent += `${prefCode},${cityCode},${officeSymbol},${officeNumber},${zip1},${zip2},${address},${compName},${repName},${tel1},${tel2},${tel3}\n`;
+          csvContent += "[data]\n";
 
-                // 従業員マスタから基本情報を抽出
-                const empid = targetTask.empId || localData.empId || cloudData.employeeId || "";
-                const kana = cloudData.lastNameKana ? `${cloudData.lastNameKana} ${cloudData.firstNameKana}`.trim() : (localData.kana || "");
-                const myNumber = cloudData.myNumber || localData.myNumber || "";
-                const pensionNum = cloudData.basicPensionNumber || cloudData.pensionNumber || localData.pensionNumber || "";
-                const birthEGov = getEgoveDate(cloudData.birthdate || localData.dob || "");
+          let exportCount = 0;
 
-                // 🍼 産休タスク特有の日付データを取得（※Firestoreのプロパティ名に合わせて変更してください）
-                const expectedBirthEGov = getEgoveDate(targetTask.expectedBirthDate || ""); // 出産予定日
-                const startLeaveEGov = getEgoveDate(targetTask.startDate || "");            // 産休開始日
-                const endLeaveEGov = getEgoveDate(targetTask.endDate || "");                // 産休終了予定日
-                const realBirthEGov = getEgoveDate(targetTask.realBirthDate || "");         // 実際の出産日（あれば）
-                const birthType = targetTask.birthType === "多胎" ? "2" : "1";              // 1:単胎, 2:多胎
+          for (const targetTask of sankyuTasks) {
+              const targetEmpName = targetTask.empName.trim();
+              const localData = localMasterDB[targetEmpName] || localMasterDB[targetEmpName.replace(/\s+/g, '')] || {};
+              const cloudData = firestoreUsersMap[targetEmpName] || firestoreUsersMap[targetEmpName.replace(/\s+/g, '')] || {};
 
-                // 🌟 1〜33番目：レコードのマッピング
-                row[0]  = "2273700";                          // 1. 様式コード
-                row[1]  = companyMaster.prefCode || "";       // 2. 都道府県コード
-                row[2]  = companyMaster.cityCode || "";       // 3. 郡市区符号
-                row[3]  = companyMaster.officeSymbol || "";   // 4. 事業所記号
+              if (Object.keys(localData).length === 0 && Object.keys(cloudData).length === 0) continue;
+
+              // 🌟 今回は全33項目！空文字で初期化してカンマのズレを完全防御！
+              const row = Array(33).fill("");
+
+              // 従業員マスタから基本情報を抽出
+              const empid = targetTask.empId || localData.empId || cloudData.employeeId || "";
+              const kana = cloudData.lastNameKana ? `${cloudData.lastNameKana} ${cloudData.firstNameKana}`.trim() : (localData.kana || "");
+              const myNumber = cloudData.myNumber || localData.myNumber || "";
+              const pensionNum = cloudData.basicPensionNumber || cloudData.pensionNumber || localData.pensionNumber || "";
+              
+              // 🔥 修正：birthDate（大文字D）のブレ対策！
+              const rawDob = cloudData.birthdate || cloudData.birthDate || localData.dob || "";
+              const birthEGov = getEgoveDate(rawDob);
+
+              // 🍼 産休タスク特有の日付データを取得
+              const expectedBirthEGov = getEgoveDate(targetTask.expectedBirthDate || ""); // 出産予定日
+              const startLeaveEGov = getEgoveDate(targetTask.startDate || "");            // 産休開始日
+              const endLeaveEGov = getEgoveDate(targetTask.endDate || "");                // 産休終了予定日
+              const realBirthEGov = getEgoveDate(targetTask.realBirthDate || "");         // 実際の出産日（あれば）
+              const birthType = targetTask.birthType === "多胎" ? "2" : "1";              // 1:単胎, 2:多胎
+
+              // 🌟 1〜33番目：レコードのマッピング
+              row[0]  = "2273700";                          // 1. 様式コード
+              row[1]  = prefCode;                           // 2. 都道府県コード ✨（キレイな変数に修正）
+              row[2]  = cityCode;                           // 3. 郡市区符号 ✨（キレイな変数に修正）
+              row[3]  = officeSymbol;                       // 4. 事業所記号 ✨（キレイな変数に修正）
                 row[4]  = empid;                              // 5. 被保険者整理番号（★トラップ回避！）
                 row[5]  = kana;                               // 6. 被保険者氏名（カナ）
                 row[6]  = targetEmpName;                      // 7. 被保険者氏名（漢字）
@@ -2240,17 +2809,25 @@ if (oldExportBtn) {
             }
 
             if (exportCount > 0) {
-                const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-                const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
-                const link = document.createElement("a");
-                link.setAttribute("href", URL.createObjectURL(blob));
-                link.setAttribute("download", "SHFD0006.CSV");
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+              // 🌟 【e-Gov完全仕様】文字列をShift-JISに変換する魔法！（産休版）
+              const unicodeArray = Encoding.stringToCode(csvContent);
+              const sjisArray = Encoding.convert(unicodeArray, {
+                  to: 'SJIS',
+                  from: 'UNICODE'
+              });
+              const uint8Array = new Uint8Array(sjisArray);
 
-                alert(`✅ ${exportCount}件の産前産後休業取得者申出書(e-Gov仕様)を出力しました！`);
-            }
+              const blob = new Blob([uint8Array], { type: 'text/csv;charset=Shift_JIS;' });
+              const link = document.createElement("a");
+              link.setAttribute("href", URL.createObjectURL(blob));
+              link.setAttribute("download", "SHFD0006.CSV");
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+
+              alert(`✅ ${exportCount}件の産前産後休業取得者申出書(e-Gov仕様)を Shift-JIS で出力しました！`);
+              isCsvExported = true;
+          }
 
         } catch (error) {
             console.error("産休CSV出力エラー:", error);
@@ -2265,9 +2842,16 @@ if (oldExportBtn) {
     
     if (ikukyuTasks.length > 0) {
         try {
-            // 1. Firebaseから会社情報を取得
+            // 🌟 1. 会社IDをローカルストレージから取得！
+            const currentCompanyId = localStorage.getItem('current_company_id');
+            if (!currentCompanyId) {
+                alert("会社情報が読み込めません。");
+                return;
+            }
+
+            // 🌟 2. 【修正】会社情報マスタを「自社専用の箱」から取得！
             let companyMaster: any = {};
-            const docSnap = await getDoc(doc(db, 'settings', 'company'));
+            const docSnap = await getDoc(doc(db, 'companies', currentCompanyId));
             if (docSnap.exists()) {
                 companyMaster = docSnap.data();
             } else {
@@ -2275,8 +2859,10 @@ if (oldExportBtn) {
                 return;
             }
 
-            // 2. Firestoreの全ユーザー情報を取得
-            const usersSnap = await getDocs(collection(db, 'users'));
+            // 🌟 3. 【超重要】必ず「自社の従業員」だけで絞り込んで取得！！！
+            const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+            const usersSnap = await getDocs(usersQuery);
+            
             const firestoreUsersMap: any = {};
             usersSnap.forEach((d) => {
                 const data = d.data();
@@ -2285,56 +2871,87 @@ if (oldExportBtn) {
                 firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
             });
             const localMasterDB = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
-
+            
+// ==========================================
+            // 🌟 1. e-Gov用メタデータと和暦エンジン
+            // ==========================================
             const csvMeta = {
-                mediaSeq: "001",
-                creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
-                repCode: "22223"
-            };
+              mediaSeq: "001",
+              creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
+              repCode: "22637" // 🔥 修正：育児休業等取得者申出書のコードは「22637」！
+          };
 
-            const getEgoveDate = (dateStr: string) => {
-                if (!dateStr) return { gengo: "", date: "" };
-                const d = new Date(dateStr);
-                const y = d.getFullYear();
-                const m = String(d.getMonth() + 1).padStart(2, '0');
-                const day = String(d.getDate()).padStart(2, '0');
-                if (y >= 2019) return { gengo: "9", date: String(y - 2018).padStart(2, '0') + m + day };
-                if (y >= 1989) return { gengo: "7", date: String(y - 1988).padStart(2, '0') + m + day };
-                return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
-            };
+          const getEgoveDate = (dateStr: string) => {
+              if (!dateStr) return { gengo: "", date: "" };
+              const d = new Date(dateStr);
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              if (y >= 2019) return { gengo: "9", date: String(y - 2018).padStart(2, '0') + m + day };
+              if (y >= 1989) return { gengo: "7", date: String(y - 1988).padStart(2, '0') + m + day };
+              return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
+          };
 
-            // 管理レコード生成
-            let csvContent = `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
-            csvContent += "[kanri]\n,001\n";
-            csvContent += `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${companyMaster.officeNumber || ""},${companyMaster.zip1 || ""},${companyMaster.zip2 || ""},${companyMaster.address || ""},${companyMaster.companyName || ""},${companyMaster.employerName || ""},${companyMaster.tel1 || ""},${companyMaster.tel2 || ""},${companyMaster.tel3 || ""}\n`;
-            csvContent += "[data]\n";
+          // ==========================================
+          // 🌟 2. 会社情報の最強抽出エンジン（育休届にも搭載！）
+          // ==========================================
+          const prefCode = companyMaster.prefCode || (companyMaster.mainBranch?.prefCode) || "";
+          const cityCode = companyMaster.cityCode || (companyMaster.mainBranch?.cityCode) || "";
+          const officeSymbol = companyMaster.officeSymbol || (companyMaster.mainBranch?.officeSymbol) || "";
+          const officeNumber = companyMaster.officeNumber || (companyMaster.mainBranch?.officeNumber) || "";
+          const address = companyMaster.address || (companyMaster.mainBranch?.address) || "";
 
-            let exportCount = 0;
+          const rawZip = companyMaster.zipCode || (companyMaster.mainBranch?.zipCode) || "";
+          const zipSplit = rawZip.split('-');
+          const zip1 = zipSplit[0] || "";
+          const zip2 = zipSplit[1] || "";
 
-            for (const targetTask of ikukyuTasks) {
-                const targetEmpName = targetTask.empName.trim();
-                const localData = localMasterDB[targetEmpName] || localMasterDB[targetEmpName.replace(/\s+/g, '')] || {};
-                const cloudData = firestoreUsersMap[targetEmpName] || firestoreUsersMap[targetEmpName.replace(/\s+/g, '')] || {};
+          const rawTel = companyMaster.tel || companyMaster.phone || (companyMaster.mainBranch?.tel) || "";
+          const telSplit = rawTel.split('-');
+          const tel1 = telSplit[0] || "";
+          const tel2 = telSplit[1] || "";
+          const tel3 = telSplit[2] || "";
 
-                if (Object.keys(localData).length === 0 && Object.keys(cloudData).length === 0) continue;
+          const compName = companyMaster.companyName || companyMaster.name || "";
+          const repName = companyMaster.employerName || companyMaster.representativeName || "";
 
-                // 🌟 竹高さんリストアップの全52項目！器を52マスに広げてカンマズレを完全防衛！
-                const row = Array(52).fill("");
+          // ==========================================
+          // 🌟 3. 管理レコード（[kanri]ブロック）生成
+          // ==========================================
+          let csvContent = `${prefCode},${cityCode},${officeSymbol},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
+          csvContent += "[kanri]\n,001\n";
+          csvContent += `${prefCode},${cityCode},${officeSymbol},${officeNumber},${zip1},${zip2},${address},${compName},${repName},${tel1},${tel2},${tel3}\n`;
+          csvContent += "[data]\n";
 
-                const empid = targetTask.empId || localData.empId || cloudData.employeeId || "";
-                const kana = cloudData.lastNameKana ? `${cloudData.lastNameKana} ${cloudData.firstNameKana}`.trim() : (localData.kana || "");
-                const myNumber = cloudData.myNumber || localData.myNumber || "";
-                const pensionNum = cloudData.basicPensionNumber || cloudData.pensionNumber || localData.pensionNumber || "";
-                const birthEGov = getEgoveDate(cloudData.birthdate || localData.dob || "");
+          let exportCount = 0;
 
-                const startLeaveEGov = getEgoveDate(targetTask.startDate || "");  // 育休開始日
-                const endLeaveEGov = getEgoveDate(targetTask.endDate || "");      // 育休終了予定日
+          for (const targetTask of ikukyuTasks) {
+              const targetEmpName = targetTask.empName.trim();
+              const localData = localMasterDB[targetEmpName] || localMasterDB[targetEmpName.replace(/\s+/g, '')] || {};
+              const cloudData = firestoreUsersMap[targetEmpName] || firestoreUsersMap[targetEmpName.replace(/\s+/g, '')] || {};
 
-                // 🌟 1〜13番目：被保険者（従業員）の基本マッピング
-                row[0]  = "2263700";                          // 1. 様式コード
-                row[1]  = companyMaster.prefCode || "";       // 2. 都道府県コード
-                row[2]  = companyMaster.cityCode || "";       // 3. 郡市区符号
-                row[3]  = companyMaster.officeSymbol || "";   // 4. 事業所記号
+              if (Object.keys(localData).length === 0 && Object.keys(cloudData).length === 0) continue;
+
+              // 🌟 竹高さんリストアップの全52項目！器を52マスに広げてカンマズレを完全防衛！
+              const row = Array(52).fill("");
+
+              const empid = targetTask.empId || localData.empId || cloudData.employeeId || "";
+              const kana = cloudData.lastNameKana ? `${cloudData.lastNameKana} ${cloudData.firstNameKana}`.trim() : (localData.kana || "");
+              const myNumber = cloudData.myNumber || localData.myNumber || "";
+              const pensionNum = cloudData.basicPensionNumber || cloudData.pensionNumber || localData.pensionNumber || "";
+              
+              // 🔥 修正：生年月日の大文字・小文字ブレ対策（安全網）
+              const rawDob = cloudData.birthdate || cloudData.birthDate || localData.dob || "";
+              const birthEGov = getEgoveDate(rawDob);
+
+              const startLeaveEGov = getEgoveDate(targetTask.startDate || "");  // 育休開始日
+              const endLeaveEGov = getEgoveDate(targetTask.endDate || "");      // 育休終了予定日
+
+              // 🌟 1〜13番目：被保険者（従業員）の基本マッピング
+              row[0]  = "2263700";                          // 1. 様式コード
+              row[1]  = prefCode;                           // 2. 都道府県コード ✨（キレイな変数に修正）
+              row[2]  = cityCode;                           // 3. 郡市区符号 ✨（キレイな変数に修正）
+              row[3]  = officeSymbol;                       // 4. 事業所記号 ✨（キレイな変数に修正）
                 row[4]  = empid;                              // 5. 被保険者整理番号
                 row[5]  = kana;                               // 6. 被保険者氏名（カナ）
                 row[6]  = targetEmpName;                      // 7. 被保険者氏名（漢字）
@@ -2378,17 +2995,25 @@ if (oldExportBtn) {
             }
 
             if (exportCount > 0) {
-                const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-                const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
-                const link = document.createElement("a");
-                link.setAttribute("href", URL.createObjectURL(blob));
-                link.setAttribute("download", "SHFD0006.CSV");
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+              // 🌟 【e-Gov完全仕様】文字列をShift-JISに変換する魔法！（産休版）
+              const unicodeArray = Encoding.stringToCode(csvContent);
+              const sjisArray = Encoding.convert(unicodeArray, {
+                  to: 'SJIS',
+                  from: 'UNICODE'
+              });
+              const uint8Array = new Uint8Array(sjisArray);
 
-                alert(`✅ ${exportCount}件の育児休業等取得者申出書(52項目・ガチ仕様)を出力しました！`);
-            }
+              const blob = new Blob([uint8Array], { type: 'text/csv;charset=Shift_JIS;' });
+              const link = document.createElement("a");
+              link.setAttribute("href", URL.createObjectURL(blob));
+              link.setAttribute("download", "SHFD0006.CSV");
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+
+              alert(`✅ ${exportCount}件の育休休業取得者申出書(e-Gov仕様)を Shift-JIS で出力しました！`);
+              isCsvExported = true;
+          } 
 
         } catch (error) {
             console.error("育休CSV出力エラー:", error);
@@ -2406,25 +3031,34 @@ if (oldExportBtn) {
     
     if (huyoTasks.length > 0) {
         try {
-            // 1. Firebaseから会社情報を取得
-            let companyMaster: any = {};
-            const docSnap = await getDoc(doc(db, 'settings', 'company'));
-            if (docSnap.exists()) {
-                companyMaster = docSnap.data();
-            } else {
-                alert("⚠️ 会社情報が設定されていません。「法定料率・マスター」タブで保存してください。");
-                return;
-            }
+      // 🌟 1. 会社IDをローカルストレージから取得！
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) {
+          alert("会社情報が読み込めません。");
+          return;
+      }
 
-            // 2. Firestoreの全ユーザー情報を取得
-            const usersSnap = await getDocs(collection(db, 'users'));
-            const firestoreUsersMap: any = {};
-            usersSnap.forEach((d) => {
-                const data = d.data();
-                const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
-                firestoreUsersMap[fullName] = data;
-                firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
-            });
+      // 🌟 2. 【修正】会社情報マスタを「自社専用の箱」から取得するように変更！
+      let companyMaster: any = {};
+      const docSnap = await getDoc(doc(db, 'companies', currentCompanyId));
+      if (docSnap.exists()) {
+          companyMaster = docSnap.data();
+      } else {
+          alert("⚠️ 会社情報が設定されていません。「法定料率・マスター」タブで保存してください。");
+          return;
+      }
+
+      // 🌟 3. 【超重要】全社員ではなく、必ず「自社の従業員」だけで絞り込んで取得！！！
+      const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+      const usersSnap = await getDocs(usersQuery);
+
+      const firestoreUsersMap: any = {};
+      usersSnap.forEach((d) => {
+          const data = d.data();
+          const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+          firestoreUsersMap[fullName] = data;
+          firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
+      });
 
             const csvMeta = {
                 mediaSeq: "001",
@@ -2617,8 +3251,15 @@ if (oldExportBtn) {
                 return;
             }
 
-            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-            const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
+            // 🌟 【e-Gov完全仕様】文字列をShift-JISに変換する魔法！（被扶養者異動届版）
+            const unicodeArray = Encoding.stringToCode(csvContent);
+            const sjisArray = Encoding.convert(unicodeArray, {
+                to: 'SJIS',
+                from: 'UNICODE'
+            });
+            const uint8Array = new Uint8Array(sjisArray);
+
+            const blob = new Blob([uint8Array], { type: 'text/csv;charset=Shift_JIS;' });
             const link = document.createElement("a");
             link.setAttribute("href", URL.createObjectURL(blob));
             link.setAttribute("download", "SHFD0006.CSV"); // ガチ仕様ファイル名
@@ -2626,7 +3267,8 @@ if (oldExportBtn) {
             link.click();
             document.body.removeChild(link);
 
-            alert(`✅ ${exportCount}件の被扶養者異動届(e-Gov仕様)を出力しました！`);
+            alert(`✅ ${exportCount}件の被扶養者異動届(e-Gov仕様)を Shift-JIS で出力しました！`);
+            isCsvExported = true;
             return;
 
         } catch (error) {
@@ -2634,6 +3276,8 @@ if (oldExportBtn) {
             alert("CSVの生成中にエラーが発生しました。");
             return;
         }
+
+        
     }
 
     // 2. 【削除（喪失）】のCSV処理
@@ -2685,50 +3329,92 @@ if (oldExportBtn) {
     
     if (lossTasks.length > 0) {
         try {
-            // 1. Firebaseから会社情報を取得
-            let companyMaster: any = {};
-            const docSnap = await getDoc(doc(db, 'settings', 'company'));
-            if (docSnap.exists()) {
-                companyMaster = docSnap.data();
-            } else {
-                alert("⚠️ 会社情報が設定されていません。「法定料率・マスター」タブで保存してください。");
-                return;
-            }
+           // 🌟 1. 会社IDをローカルストレージから取得！
+           const currentCompanyId = localStorage.getItem('current_company_id');
+           if (!currentCompanyId) {
+               alert("会社情報が読み込めません。");
+               return;
+           }
 
-            // 2. Firestoreの全ユーザー情報を取得
-            const usersSnap = await getDocs(collection(db, 'users'));
-            const firestoreUsersMap: any = {};
-            usersSnap.forEach((d) => {
-                const data = d.data();
-                const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
-                firestoreUsersMap[fullName] = data;
-                firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
-            });
+           // 🌟 2. 【修正】会社情報マスタを「自社専用の箱」から取得！
+           let companyMaster: any = {};
+           const docSnap = await getDoc(doc(db, 'companies', currentCompanyId));
+           if (docSnap.exists()) {
+               companyMaster = docSnap.data();
+           } else {
+               alert("⚠️ 会社情報が設定されていません。「法定料率・マスター」タブで保存してください。");
+               return;
+           }
 
+           // 🌟 3. 【超重要】必ず「自社の従業員」だけで絞り込んで取得！！！
+           const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+           const usersSnap = await getDocs(usersQuery);
+           
+           const firestoreUsersMap: any = {};
+           usersSnap.forEach((d) => {
+               const data = d.data();
+               const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+               firestoreUsersMap[fullName] = data;
+               firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
+           });
+
+// ==========================================
+            // 🌟 1. e-Gov用メタデータ（喪失届用）
+            // ==========================================
             const csvMeta = {
-                mediaSeq: "001",
-                creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
-                repCode: "22223"
-            };
+              mediaSeq: "001",
+              creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
+              repCode: "22017" // 🚨 修正：資格喪失届のコード「22017」に変更！
+          };
 
-            const getEgoveDate = (dateStr: string) => {
-                if (!dateStr) return { gengo: "", date: "" };
-                const d = new Date(dateStr);
-                const y = d.getFullYear();
-                const m = String(d.getMonth() + 1).padStart(2, '0');
-                const day = String(d.getDate()).padStart(2, '0');
-                if (y >= 2019) return { gengo: "9", date: String(y - 2018).padStart(2, '0') + m + day };
-                if (y >= 1989) return { gengo: "7", date: String(y - 1988).padStart(2, '0') + m + day };
-                return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
-            };
+          const getEgoveDate = (dateStr: string) => {
+              if (!dateStr) return { gengo: "", date: "" };
+              const d = new Date(dateStr);
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              if (y >= 2019) return { gengo: "9", date: String(y - 2018).padStart(2, '0') + m + day };
+              if (y >= 1989) return { gengo: "7", date: String(y - 1988).padStart(2, '0') + m + day };
+              return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
+          };
 
-            let csvContent = `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
-            csvContent += "[kanri]\n,001\n";
-            csvContent += `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${companyMaster.officeNumber || ""},${companyMaster.zip1 || ""},${companyMaster.zip2 || ""},${companyMaster.address || ""},${companyMaster.companyName || ""},${companyMaster.employerName || ""},${companyMaster.tel1 || ""},${companyMaster.tel2 || ""},${companyMaster.tel3 || ""}\n`;
-            csvContent += "[data]\n";
+          // ==========================================
+          // 🌟 2. 会社マスタの抽出（直下・mainBranch両方探す最強エンジン）
+          // ==========================================
+          const prefCode = companyMaster.prefCode || (companyMaster.mainBranch?.prefCode) || "";
+          const cityCode = companyMaster.cityCode || (companyMaster.mainBranch?.cityCode) || "";
+          const officeSymbol = companyMaster.officeSymbol || (companyMaster.mainBranch?.officeSymbol) || "";
+          const officeNumber = companyMaster.officeNumber || (companyMaster.mainBranch?.officeNumber) || "";
+          const address = companyMaster.address || (companyMaster.mainBranch?.address) || "";
 
-            let exportCount = 0;
-            const localMasterDB = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
+          // 郵便番号のハイフン分割
+          const rawZip = companyMaster.zipCode || (companyMaster.mainBranch?.zipCode) || "";
+          const zipSplit = rawZip.split('-');
+          const zip1 = zipSplit[0] || "";
+          const zip2 = zipSplit[1] || "";
+
+          // 電話番号のハイフン分割
+          const rawTel = companyMaster.tel || companyMaster.phone || (companyMaster.mainBranch?.tel) || "";
+          const telSplit = rawTel.split('-');
+          const tel1 = telSplit[0] || "";
+          const tel2 = telSplit[1] || "";
+          const tel3 = telSplit[2] || "";
+
+          // 会社名と代表者名
+          const compName = companyMaster.companyName || companyMaster.name || "";
+          const repName = companyMaster.employerName || companyMaster.representativeName || "";
+
+          // ==========================================
+          // 🌟 3. CSVヘッダー（kanriブロック）の組み立て
+          // ==========================================
+          let csvContent = `${prefCode},${cityCode},${officeSymbol},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
+          csvContent += `[kanri]\n`;
+          csvContent += `,001\n`;
+          csvContent += `${prefCode},${cityCode},${officeSymbol},${officeNumber},${zip1},${zip2},${address},${compName},${repName},${tel1},${tel2},${tel3}\n`;
+          csvContent += `[data]\n`;
+
+          let exportCount = 0;
+          const localMasterDB = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
 
             for (const targetTask of lossTasks) {
                 const targetEmpName = targetTask.empName.trim();
@@ -2781,12 +3467,13 @@ if (oldExportBtn) {
                 const attachedCount = isReturned ? "1" : "0"; 
                 const unreturnedCount = isReturned ? "0" : "1"; 
 
-                const row = [
-                    "2201700", companyMaster.prefCode || "", companyMaster.cityCode || "", companyMaster.officeSymbol || "",
-                    companyMaster.officeNumber || "", empid, kana, kanji, birthEGov.gengo, birthEGov.date, myNumber, "",
-                    pensionNum, lossEGov.gengo, lossEGov.date, lossReason, retireEGov.gengo, retireEGov.date,
-                    "", "", "", attachedCount, unreturnedCount, "", "", "", ""
-                ];
+            // 🌟 修正：抽出したきれいな変数（prefCode等）を使うように変更
+            const row = [
+              "2201700", prefCode, cityCode, officeSymbol, officeNumber, 
+              empid, kana, kanji, birthEGov.gengo, birthEGov.date, myNumber, "",
+              pensionNum, lossEGov.gengo, lossEGov.date, lossReason, retireEGov.gengo, retireEGov.date,
+              "", "", "", attachedCount, unreturnedCount, "", "", "", ""
+            ];
                 csvContent += row.join(",") + "\n";
                 exportCount++;
             }
@@ -2796,17 +3483,24 @@ if (oldExportBtn) {
                 return;
             }
 
-            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-            const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
+            // 🌟 【e-Gov完全仕様】文字列をShift-JISに変換する魔法！（被扶養者異動届版）
+            const unicodeArray = Encoding.stringToCode(csvContent);
+            const sjisArray = Encoding.convert(unicodeArray, {
+                to: 'SJIS',
+                from: 'UNICODE'
+            });
+            const uint8Array = new Uint8Array(sjisArray);
+
+            const blob = new Blob([uint8Array], { type: 'text/csv;charset=Shift_JIS;' });
             const link = document.createElement("a");
             link.setAttribute("href", URL.createObjectURL(blob));
-            link.setAttribute("download", "SHFD0006.CSV"); // ガチ仕様！
+            link.setAttribute("download", "SHFD0006.CSV"); // ガチ仕様ファイル名
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
 
-            alert(`✅ ${exportCount}件の資格喪失届(e-Gov仕様)を出力しました！`);
-            return; // 🌟 重要：ここで処理を止めることで下の汎用コードに行かない
+            alert(`✅ ${exportCount}件の資格喪失届(e-Gov仕様)を Shift-JIS で出力しました！`);
+            isCsvExported = true;
             
         } catch (error) {
             console.error("CSV出力エラー:", error);
@@ -2840,6 +3534,7 @@ if (oldExportBtn) {
             
             downloadCSV(csvContent, `健康保険_被保険者証再交付申請書_${new Date().toISOString().split('T')[0]}.csv`);
             alert('✅ 保険証再交付申請書のCSVを出力しました！\n※事象発生日などの詳細はExcelで確認・追記してください。');
+            isCsvExported = true;
             return; // 処理ストップ
         }
 
@@ -2900,80 +3595,14 @@ if (oldExportBtn) {
         alert('【エラー】提出先（フォーマット）が異なるタスクが混在しています。\n同じ提出先のタスクのみを選択して出力してください。');
         return;
       }
-
-      // 混ざっていなければ、その抽出された1つの提出先をターゲットフォーマットにする！
-      const targetAgency = agencies[0];
-
-      // 🌟 1. 事業所マスターをDBから呼び出す
-      const companyMaster = JSON.parse(localStorage.getItem('hr_company_master') || '{}');
-      // 🌟 2. 従業員マスターをDBから呼び出す
-      const employeeMasterDB = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
-
-      let headers: string[] = [];
-      let csvRows: string[] = [];
-
-// 💡 e-Govフォーマット分岐
-// 🌟 【追加】ガチ仕様エンジン（SHFD0006）で処理済みのタスクをリストアップして除外する
-const unhandledTasks = exportTasks.filter((t: any) => 
-  !t.title.includes('被扶養者') && 
-  !t.title.includes('産前産後休業') && 
-  !t.title.includes('育児休業等') &&
-  !t.title.includes('資格喪失') &&
-  !t.title.includes('算定基礎') &&
-  !t.title.includes('月額変更') &&
-  !t.title.includes('賞与支払')
-);
-
-// 🌟 【追加】もし専用エンジンで全部処理されて残りのタスクが0件なら、ここでストップ（汎用CSVは出さない）
-if (unhandledTasks.length === 0) return;
-
-if (targetAgency === '年金事務所') {
-  headers = ['事業所整理記号', '被保険者整理番号', '氏名(半角カナ)', '氏名(全角)', '生年月日(和暦)', '基礎年金番号', '標準報酬月額', '個人番号連携'];
-  // 🌟 変更：exportTasks ではなく、上で絞り込んだ unhandledTasks を使う！
-  csvRows = unhandledTasks.map((t: any) => {
-    const emp = employeeMasterDB[t.empName] || {};
-    return [
-      companyMaster.pensionSymbol || '', 
-      emp.empId || '',                  // 🌟 マスターの「社員番号(000001)」を連携
-      emp.kana || '',
-      emp.name || t.empName,
-      toEGovDateCode(emp.dob),
-      emp.basicPensionNo || '',
-      emp.baseSalary || '',
-      emp.myNumber || ''                // 🌟 エラー回避のため空欄に（※e-Govガチ仕様側で出力するため汎用は空欄でOK）
-    ].map(value => `"${(value || '').toString().replace(/"/g, '""')}"`).join(',');
-  });
-
-} else if (targetAgency === 'ハローワーク') {
-  // 🛡️ ガード発動！CSVを作らずにアラートで弾く！
-  alert("⚠️ 雇用保険（ハローワーク）関連の手続きは、現在のe-Gov CSV出力の対象外です。");
-  return; // 👈 ここで処理を強制終了！下にあるダウンロード処理に進ませない！
-
-} else {
-  // 🛡️ ガード発動！「社内」などその他のタスクも弾く！
-  alert(`⚠️ 「${targetAgency}」のタスクはCSV出力の対象外です。\n（※年金事務所の法定手続きのみ出力可能です）`);
-  return; // 👈 ここで処理を強制終了！
-}
-
-const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-const csvContent = headers.join(',') + '\n' + csvRows.join('\n');
-const blob = new Blob([bom, csvContent], { type: 'text/csv' });
-const url = window.URL.createObjectURL(blob);
-
-const a = document.createElement('a');
-a.href = url;
-// ファイル名もターゲットの名前に変更
-a.download = `eGov申請用_${targetAgency}_${new Date().toISOString().slice(0, 10)}.csv`;
-a.click();
-window.URL.revokeObjectURL(url);
+      // 🌟 ガチ仕様エンジンで処理されなかったタスクが残っている場合はエラーで弾く！
+      if (!isCsvExported) {
+        alert("⚠️ 選択されたタスクは現在のCSV出力（e-Gov連携）の対象外です。");
+      }
+      return;
+    
 });
 }
-
-
-
-
-
-
   // --- 既存のフィルター・ソート・アーカイブ機能群 ---
   document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -2998,7 +3627,7 @@ window.URL.revokeObjectURL(url);
   if (archiveAllBtn) {
     archiveAllBtn.addEventListener('click', () => {
       tasks = tasks.map((t: any) => t.status === 'done' ? { ...t, status: 'archive' } : t);
-      localStorage.setItem('hr_tasks', JSON.stringify(tasks));
+      localStorage.setItem(taskKey, JSON.stringify(tasks)); // 🌟 自分の会社のタスクだけを更新！
       renderTasks();
     });
   }
@@ -3007,7 +3636,9 @@ window.URL.revokeObjectURL(url);
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
       if(confirm('本当にすべてのタスクデータを消去しますか？（デバッグ用）')) {
-        localStorage.setItem('hr_tasks', '[]'); tasks = []; renderTasks();
+        localStorage.setItem(taskKey, '[]'); // 🌟 自分の会社のタスクだけを空っぽに！
+        tasks = []; 
+        renderTasks();
       }
     });
   }
@@ -3039,40 +3670,41 @@ window.URL.revokeObjectURL(url);
         </div>
       `).join('');
 
-      document.querySelectorAll('.restore-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const id = Number((e.currentTarget as HTMLButtonElement).getAttribute('data-id'));
-          tasks = tasks.map((t: any) => t.id === id ? { ...t, status: 'done' } : t);
-          localStorage.setItem('hr_tasks', JSON.stringify(tasks)); renderArchiveList(); renderTasks();
-        });
-      });
+          document.querySelectorAll('.restore-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              const id = Number((e.currentTarget as HTMLButtonElement).getAttribute('data-id'));
+              tasks = tasks.map((t: any) => t.id === id ? { ...t, status: 'done' } : t);
+              localStorage.setItem(taskKey, JSON.stringify(tasks)); renderArchiveList(); renderTasks(); // 🌟 専用キーで保存！
+            });
+          });
 
-      document.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          if (confirm('このタスクを完全に削除しますか？')) {
-            const id = Number((e.currentTarget as HTMLButtonElement).getAttribute('data-id'));
-            tasks = tasks.filter((t: any) => t.id !== id);
-            localStorage.setItem('hr_tasks', JSON.stringify(tasks)); renderArchiveList();
+          document.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              if (confirm('このタスクを完全に削除しますか？')) {
+                const id = Number((e.currentTarget as HTMLButtonElement).getAttribute('data-id'));
+                tasks = tasks.filter((t: any) => t.id !== id);
+                localStorage.setItem(taskKey, JSON.stringify(tasks)); renderArchiveList(); // 🌟 専用キーで保存！
+              }
+            });
+          });
+        }
+      };
+
+      if (archiveBtn && archiveModal && archiveCloseBtn) {
+        archiveBtn.addEventListener('click', () => { renderArchiveList(); archiveModal.style.display = 'flex'; });
+        archiveCloseBtn.addEventListener('click', () => { archiveModal.style.display = 'none'; renderTasks(); });
+      }
+
+      if (emptyArchiveBtn) {
+        emptyArchiveBtn.addEventListener('click', () => {
+          const archivedCount = tasks.filter((t: any) => t.status === 'archive').length;
+          if (archivedCount === 0) return;
+          if (confirm(`アーカイブ内の ${archivedCount} 件のタスクをすべて完全削除しますか？`)) {
+            tasks = tasks.filter((t: any) => t.status !== 'archive'); 
+            localStorage.setItem(taskKey, JSON.stringify(tasks)); renderArchiveList(); // 🌟 専用キーで保存！
           }
         });
-      });
-    }
-  };
-
-  if (archiveBtn && archiveModal && archiveCloseBtn) {
-    archiveBtn.addEventListener('click', () => { renderArchiveList(); archiveModal.style.display = 'flex'; });
-    archiveCloseBtn.addEventListener('click', () => { archiveModal.style.display = 'none'; renderTasks(); });
-  }
-
-  if (emptyArchiveBtn) {
-    emptyArchiveBtn.addEventListener('click', () => {
-      const archivedCount = tasks.filter((t: any) => t.status === 'archive').length;
-      if (archivedCount === 0) return;
-      if (confirm(`アーカイブ内の ${archivedCount} 件のタスクをすべて完全削除しますか？`)) {
-        tasks = tasks.filter((t: any) => t.status !== 'archive'); localStorage.setItem('hr_tasks', JSON.stringify(tasks)); renderArchiveList();
       }
-    });
-  }
 
   renderTasks();
 }
@@ -3135,7 +3767,16 @@ async function loadInsuranceMasterTab() {
 // 💡 DBのhistoryから「一番新しい設定」を読み込んで表示する
 const loadCurrentSettings = async () => {
   try {
-    const historyRef = collection(db, 'settings', 'insurance', 'history');
+    // 🌟 1. 会社IDを取得して防壁を張る！
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) {
+        console.warn("会社情報が読み込めないため、設定のロードを中止します。");
+        return;
+    }
+
+    // 🌟 2. 【超重要】全社共通の 'settings' ではなく、自社専用の 'companies' の中から履歴を読み込む！
+    // （※パスを 'companies' -> 自分の会社ID -> 'insurance_history' に変更）
+    const historyRef = collection(db, 'companies', currentCompanyId, 'insurance_history');
     const querySnapshot = await getDocs(historyRef);
 
     let settingsList: any[] = [];
@@ -3196,33 +3837,33 @@ const loadCurrentSettings = async () => {
 // ==========================================
     // 🏢 会社情報のロード（Firebaseメイン、無い場合はLocalから）
     // ==========================================
-    try {
-      const docSnap = await getDoc(doc(db, 'settings', 'company'));
-      if (docSnap.exists()) {
-          const data = docSnap.data();
-          (document.getElementById('master-company-name') as HTMLInputElement).value = data.companyName || '';
-          (document.getElementById('master-employer-name') as HTMLInputElement).value = data.employerName || '';
-          (document.getElementById('master-zip1') as HTMLInputElement).value = data.zip1 || '';
-          (document.getElementById('master-zip2') as HTMLInputElement).value = data.zip2 || '';
-          (document.getElementById('master-address') as HTMLInputElement).value = data.address || '';
-          (document.getElementById('master-tel1') as HTMLInputElement).value = data.tel1 || '';
-          (document.getElementById('master-tel2') as HTMLInputElement).value = data.tel2 || '';
-          (document.getElementById('master-tel3') as HTMLInputElement).value = data.tel3 || '';
-          (document.getElementById('master-pref-code') as HTMLInputElement).value = data.prefCode || '';
-          (document.getElementById('master-city-code') as HTMLInputElement).value = data.cityCode || '';
-          (document.getElementById('master-pension-symbol') as HTMLInputElement).value = data.officeSymbol || '';
-          (document.getElementById('master-pension-number') as HTMLInputElement).value = data.officeNumber || '';
-          (document.getElementById('master-emp-ins-number') as HTMLInputElement).value = data.empInsNumber || '';
-      } else {
-          // Firebaseにデータが無い（初回）場合は、既存の localStorage から最低限復元する（安全装置）
-          const savedCompanyMaster = JSON.parse(localStorage.getItem('hr_company_master') || '{}');
-          (document.getElementById('master-company-name') as HTMLInputElement).value = savedCompanyMaster.companyName || '';
-          (document.getElementById('master-pension-symbol') as HTMLInputElement).value = savedCompanyMaster.pensionSymbol || '';
-          (document.getElementById('master-emp-ins-number') as HTMLInputElement).value = savedCompanyMaster.empInsNumber || '';
-      }
-  } catch (e) {
-      console.error("会社情報の読み込みエラー:", e);
-  }
+  //   try {
+  //     const docSnap = await getDoc(doc(db, 'settings', 'company'));
+  //     if (docSnap.exists()) {
+  //         const data = docSnap.data();
+  //         (document.getElementById('master-company-name') as HTMLInputElement).value = data.companyName || '';
+  //         (document.getElementById('master-employer-name') as HTMLInputElement).value = data.employerName || '';
+  //         (document.getElementById('master-zip1') as HTMLInputElement).value = data.zip1 || '';
+  //         (document.getElementById('master-zip2') as HTMLInputElement).value = data.zip2 || '';
+  //         (document.getElementById('master-address') as HTMLInputElement).value = data.address || '';
+  //         (document.getElementById('master-tel1') as HTMLInputElement).value = data.tel1 || '';
+  //         (document.getElementById('master-tel2') as HTMLInputElement).value = data.tel2 || '';
+  //         (document.getElementById('master-tel3') as HTMLInputElement).value = data.tel3 || '';
+  //         (document.getElementById('master-pref-code') as HTMLInputElement).value = data.prefCode || '';
+  //         (document.getElementById('master-city-code') as HTMLInputElement).value = data.cityCode || '';
+  //         (document.getElementById('master-pension-symbol') as HTMLInputElement).value = data.officeSymbol || '';
+  //         (document.getElementById('master-pension-number') as HTMLInputElement).value = data.officeNumber || '';
+  //         (document.getElementById('master-emp-ins-number') as HTMLInputElement).value = data.empInsNumber || '';
+  //     } else {
+  //         // Firebaseにデータが無い（初回）場合は、既存の localStorage から最低限復元する（安全装置）
+  //         const savedCompanyMaster = JSON.parse(localStorage.getItem('hr_company_master') || '{}');
+  //         (document.getElementById('master-company-name') as HTMLInputElement).value = savedCompanyMaster.companyName || '';
+  //         (document.getElementById('master-pension-symbol') as HTMLInputElement).value = savedCompanyMaster.pensionSymbol || '';
+  //         (document.getElementById('master-emp-ins-number') as HTMLInputElement).value = savedCompanyMaster.empInsNumber || '';
+  //     }
+  // } catch (e) {
+  //     console.error("会社情報の読み込みエラー:", e);
+  // }
 
 
 
@@ -3285,7 +3926,15 @@ saveBtn.addEventListener('click', async () => {
   try {
     // 💡 NEW: パスを履歴用（history）に変更し、IDに取得した applyMonth を使う！
     // 例：'settings', 'insurance', 'history', '2026-04' に保存される
-    await setDoc(doc(db, 'settings', 'insurance', 'history', applyMonth), saveData);
+    // 🌟 1. 会社IDを取得！
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) {
+        alert("会社情報が読み込めません。再読み込みしてください。");
+        return;
+    }
+
+    // 🌟 2. 自分の会社専用の箱（パス）に保存する！
+    await setDoc(doc(db, 'companies', currentCompanyId, 'insurance_history', applyMonth), saveData);
     
 
 
@@ -3305,45 +3954,71 @@ saveBtn.addEventListener('click', async () => {
         // 🌟 async を追加して Firebase 通信に対応！
         btnSaveNumbers.addEventListener('click', async () => {
             
-            // 全13項目の値を画面から取得
-            const companyData = {
-                companyName: (document.getElementById('master-company-name') as HTMLInputElement)?.value || '',
-                employerName: (document.getElementById('master-employer-name') as HTMLInputElement)?.value || '',
-                zip1: (document.getElementById('master-zip1') as HTMLInputElement)?.value || '',
-                zip2: (document.getElementById('master-zip2') as HTMLInputElement)?.value || '',
-                address: (document.getElementById('master-address') as HTMLInputElement)?.value || '',
-                tel1: (document.getElementById('master-tel1') as HTMLInputElement)?.value || '',
-                tel2: (document.getElementById('master-tel2') as HTMLInputElement)?.value || '',
-                tel3: (document.getElementById('master-tel3') as HTMLInputElement)?.value || '',
-                prefCode: (document.getElementById('master-pref-code') as HTMLInputElement)?.value || '',
-                cityCode: (document.getElementById('master-city-code') as HTMLInputElement)?.value || '',
-                officeSymbol: (document.getElementById('master-pension-symbol') as HTMLInputElement)?.value || '',
-                officeNumber: (document.getElementById('master-pension-number') as HTMLInputElement)?.value || '',
-                empInsNumber: (document.getElementById('master-emp-ins-number') as HTMLInputElement)?.value || ''
+            // 1. 画面から値を取得（新設した「事業所名」もここで取得！）
+            const companyName = (document.getElementById('master-company-name') as HTMLInputElement)?.value || '';
+            const employerName = (document.getElementById('master-employer-name') as HTMLInputElement)?.value || '';
+            const branchName = (document.getElementById('master-branch-name') as HTMLInputElement)?.value || '本社'; // 👈 NEW!!
+            
+            const zip1 = (document.getElementById('master-zip1') as HTMLInputElement)?.value || '';
+            const zip2 = (document.getElementById('master-zip2') as HTMLInputElement)?.value || '';
+            const address = (document.getElementById('master-address') as HTMLInputElement)?.value || '';
+            const tel1 = (document.getElementById('master-tel1') as HTMLInputElement)?.value || '';
+            const tel2 = (document.getElementById('master-tel2') as HTMLInputElement)?.value || '';
+            const tel3 = (document.getElementById('master-tel3') as HTMLInputElement)?.value || '';
+            
+            const prefCode = (document.getElementById('master-pref-code') as HTMLInputElement)?.value || '';
+            const cityCode = (document.getElementById('master-city-code') as HTMLInputElement)?.value || '';
+            const officeSymbol = (document.getElementById('master-pension-symbol') as HTMLInputElement)?.value || '';
+            const officeNumber = (document.getElementById('master-pension-number') as HTMLInputElement)?.value || '';
+            const empInsNumber = (document.getElementById('master-emp-ins-number') as HTMLInputElement)?.value || '';
+
+            // 🌟🌟🌟 2. データを「会社」と「事業所」の階層に綺麗に整理する！ 🌟🌟🌟
+            const companySettings = {
+                companyName: companyName,
+                employerName: employerName,
+                
+                // 📍 事業所情報を「mainBranch」という箱にまとめる
+                mainBranch: {
+                    branchName: branchName,
+                    zipCode: `${zip1}-${zip2}`,
+                    address: address,
+                    tel: `${tel1}-${tel2}-${tel3}`,
+                    prefCode: prefCode,
+                    cityCode: cityCode,
+                    officeSymbol: officeSymbol,
+                    officeNumber: officeNumber,
+                    empInsNumber: empInsNumber
+                },
+                updatedAt: new Date()
             };
 
             try {
-                // 1. Firebase に全データを保存（e-Gov連携用）
-                await setDoc(doc(db, 'settings', 'company'), companyData);
-                
-                // 2. 既存システムとの互換性のため、LocalStorage にも全く同じデータを保存（安全策！）
-                localStorage.setItem('hr_company_master', JSON.stringify(companyData));
+              // 3. Firebase に保存
+              const currentCompanyId = localStorage.getItem('current_company_id');
+              if (!currentCompanyId) {
+                alert("エラー：会社IDが取得できませんでした。");
+                return;
+              }
 
-                // 保存完了メッセージの表示（既存ロジックを踏襲）
-                const msg = document.getElementById('save-msg-numbers');
-                if (msg) {
-                    msg.style.display = 'inline-block';
-                    setTimeout(() => { msg.style.display = 'none'; }, 3000);
-                }
-            } catch (e) {
-                console.error("会社情報の保存エラー:", e);
-                alert('設定の保存に失敗しました。');
-            }
+              // 🌟 Firebaseには、その会社IDのドキュメントに保存する！
+              await setDoc(doc(db, 'companies', currentCompanyId), companySettings, { merge: true });
+              
+              // 🌟 LocalStorage（ブラウザの記憶）も、会社ID付きの【専用の箱】に保存する！
+              // ❌ localStorage.setItem('hr_company_master', ...); ← これはもう使いません！
+              localStorage.setItem(`company_master_${currentCompanyId}`, JSON.stringify(companySettings));
+
+              // 5. 保存完了メッセージの表示
+              const msg = document.getElementById('save-msg-numbers');
+              if (msg) {
+                  msg.style.display = 'inline-block';
+                  setTimeout(() => { msg.style.display = 'none'; }, 3000);
+              }
+          } catch (e) {
+              console.error("会社情報の保存エラー:", e);
+              alert('設定の保存に失敗しました。');
+          }
         });
     }
-
-
-
 
 
   } catch (error) {
@@ -3409,11 +4084,7 @@ setTimeout(() => {
 }, 100);
 
   }
-  
-
-
-
-  
+    
     // ③ アプリ起動時に、自動で給与タブをドッキングする
 // ☺️ アプリ起動時に、自動で給与タブをドッキングする（メイン初期化処理）
 window.addEventListener('DOMContentLoaded', async () => {
@@ -3477,14 +4148,24 @@ export async function checkAndProcessRetirementTask(task: any) {
         try {
             let targetDocId = task.empId || task.userId;
 
-            // 🌟 安全装置：タスクにIDがない場合、名前からマスタのIDを逆引きする
+            // 🌟 安全装置：タスクにIDがない場合、名前からマスタのIDを「自社内から」逆引きする
             if (!targetDocId && task.empName) {
-                const usersSnap = await getDocs(collection(db, 'users'));
-                usersSnap.forEach(u => {
-                    const d = u.data();
-                    const fullName = `${d.lastNameKanji || ''} ${d.firstNameKanji || ''}`.trim();
-                    if (fullName === task.empName) targetDocId = u.id;
-                });
+              // 🌟 1. 会社IDを取得して防壁を張る！
+              const currentCompanyId = localStorage.getItem('current_company_id');
+              if (!currentCompanyId) {
+                  console.error("会社IDが取得できないため、自動退職処理をスキップしました。");
+                  return;
+              }
+
+              // 🌟 2. 【超重要】「自社」の従業員だけを絞り込んで名前を検索！！！
+              const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+              const usersSnap = await getDocs(usersQuery);
+
+              usersSnap.forEach(u => {
+                  const d = u.data();
+                  const fullName = `${d.lastNameKanji || ''} ${d.firstNameKanji || ''}`.trim();
+                  if (fullName === task.empName) targetDocId = u.id;
+              });
             }
 
             if (targetDocId) {
@@ -3511,16 +4192,16 @@ export async function checkAndProcessRetirementTask(task: any) {
 // 💡 月額給与タブ（毎月の実績入力）の制御ロジック
 // ==========================================
 
-// 1. firebaseから従業員を読み込む
-async function fetchEmployeesFromFirebase() {
-    const querySnapshot = await getDocs(collection(db, "employees"));
-    const employees: any[] = [];
-    querySnapshot.forEach((doc) => {
-      // Firebase上のドキュメントIDまたはフィールドの「employeeId」を使う
-      employees.push({ id: doc.id, ...doc.data() });
-    });
-    return employees;
-  }
+// // 1. firebaseから従業員を読み込む
+// async function fetchEmployeesFromFirebase() {
+//     const querySnapshot = await getDocs(collection(db, "employees"));
+//     const employees: any[] = [];
+//     querySnapshot.forEach((doc) => {
+//       // Firebase上のドキュメントIDまたはフィールドの「employeeId」を使う
+//       employees.push({ id: doc.id, ...doc.data() });
+//     });
+//     return employees;
+//   }
   
 // ==========================================
 // 🌟 随時改定の統合ロジック（どこからでも呼べる共通関数）
@@ -3617,9 +4298,10 @@ async function initMonthlySalaryUI() {
   if (!tbody) return;
   
     // 🌟 パソコンの時計から「今」の年月を自動取得する！
-    const today = new Date();
-    let currentYear = today.getFullYear();
-    let currentMonth = today.getMonth() + 1; // ※JavaScriptの月は0から始まるので+1します
+    
+    // ブラウザの記憶を探して、あれば数値に変換。なければ 2026 / 6 を初期値にする！
+    let currentYear = Number(localStorage.getItem('saved_salary_year')) || 2026;
+    let currentMonth = Number(localStorage.getItem('saved_salary_month')) || 6;
   
     // 🔄 画面を描画する関数（月を切り替えるたびに呼ばれる！）
     const loadMonthlyData = async () => {
@@ -3627,11 +4309,37 @@ async function initMonthlySalaryUI() {
       const alertBox = document.getElementById('monthly-change-alert');
       if (alertBox) alertBox.style.display = 'none';
 
+      // 🌟 ここに期間更新処理をドッキング！
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (currentCompanyId) {
+          const companySnap = await getDoc(doc(db, 'companies', currentCompanyId));
+          const data = companySnap.exists() ? companySnap.data() : {};
+          
+          // 設定値を取得（なければデフォルト）
+          const cDay = data.cutoffDay || "末";
+          const pMonth = data.paymentMonth || "next";
+
+          // 期間計算ロジック（そのままコピーして使ってください！）
+          let s = "", e = "";
+          if (cDay === "末" || cDay === "末日") {
+            if (pMonth === "current" || pMonth === "当月払い") { s = `${currentMonth}月1日`; e = `${currentMonth}月末日`; }
+            else { const d = new Date(currentYear, currentMonth - 2, 1); s = `${d.getMonth() + 1}月1日`; e = `${d.getMonth() + 1}月末日`; }
+          } else {
+            const c = parseInt(cDay, 10);
+            if (pMonth === "current" || pMonth === "当月払い") { const d = new Date(currentYear, currentMonth - 2, 1); s = `${d.getMonth() + 1}月${c + 1}日`; e = `${currentMonth}月${c}日`; }
+            else { const d1 = new Date(currentYear, currentMonth - 3, 1); const d2 = new Date(currentYear, currentMonth - 2, 1); s = `${d1.getMonth() + 1}月${c + 1}日`; e = `${d2.getMonth() + 1}月${c}日`; }
+          }
+
+          const guide = document.getElementById('salary-period-guide') || document.getElementById('display-target-period');
+          if (guide) guide.innerText = `（${s} 〜 ${e} 稼働分）`;
+      }
 
       const companyRates = await fetchCompanyInsuranceSettings(currentYear, currentMonth);
 
       const display = document.getElementById('display-current-month');
       if (display) display.innerText = `${currentYear}年 ${currentMonth}月分 給与実績`;
+
+
   
       const tbody = document.getElementById('salary-input-body');
       if (!tbody) return;
@@ -3642,16 +4350,34 @@ async function initMonthlySalaryUI() {
         const employees: any[] = [];
         const payrollRecords: any[] = []; // ① ここで宣言しているのでOK！
         
-        const usersSnapshot = await getDocs(collection(db, "users"));
-        const currentFilter = localStorage.getItem('salaryFilter') || 'active';
-        // 🌟 NEW: 追加したプルダウン（区分）のフィルター状態を取得！
-        const currentTypeFilter = localStorage.getItem('salaryTypeFilter') || 'all';
+　　　　// ==========================================
+        // 🌟 NEW: 会社IDを取得して魔法のフィルターをかける！
+        // ==========================================
+        const currentCompanyId = localStorage.getItem('current_company_id');
+        if (!currentCompanyId) {
+            console.error("会社IDが見つかりません");
+            return;
+        }
 
+        // 🌟 修正①：従業員を「自分の会社」だけで絞り込む！
+        const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
+        const usersSnapshot = await getDocs(usersQuery);
+        
+        const currentFilter = localStorage.getItem('salary_status') || 'active';
+        const currentTypeFilter = localStorage.getItem('salary_type') || 'all';
+
+        // 🌟🌟🌟 ここからテストコードを追加！ 🌟🌟🌟
+        console.log("🚨 【テスト】給与タブの読み込みスタート 🚨");
+        console.log("① 今のフィルター状態 -> ステータス:", currentFilter, " / 区分:", currentTypeFilter);
+        // 🌟🌟🌟 ここまで 🌟🌟🌟
+        
         usersSnapshot.forEach((doc) => {
             const data = doc.data();
 
             if (currentFilter === 'active' && data.employeeStatus !== 'active') return;
             if (currentFilter === 'retired' && data.employeeStatus !== 'retired') return;
+
+            // ...（この間の socInsType などのフィルター処理はそのまま変更なし！）...
 
             // =========================================================
             // 🌟🌟🌟 2. 【NEW】区分（社保区分）のフィルター 🌟🌟🌟
@@ -3694,9 +4420,11 @@ async function initMonthlySalaryUI() {
           if (idA > idB) return 1;
           return 0;
         });
-  
-        // 💡 ここで「該当月の給与データ」をFirebaseから取ってくる！
-        const payrollSnapshot = await getDocs(collection(db, "monthly_payroll_records"));
+
+ 　　　　 // 💡 ここで「該当月の給与データ」をFirebaseから取ってくる！
+        // 🌟 修正②：給与データも「自分の会社」のものだけで絞り込む！
+        const payrollQuery = query(collection(db, "monthly_payroll_records"), where("companyId", "==", currentCompanyId));
+        const payrollSnapshot = await getDocs(payrollQuery);
         
         // ❌ ここにあった「const payrollRecords: any[] = [];」の1行を消去！！
         // 先頭で宣言した配列に、そのまま push して詰め込んでいきます
@@ -4029,14 +4757,50 @@ const burdenHTML = `
 
 // 🌟 ここにこの1行を追加！！！（行に社員IDの名札をつける）
 tr.setAttribute('data-emp-id', String(empId));
+
+// ==========================================
+// 🌟 UI改善：社保区分のバッジ作成ロジック（追加！）
+// ※ empType は竹高さんが上で既に定義しているのでそのまま使います！
+// ==========================================
+let socInsLabel = "一般";
+let socInsBg = "#d1fae5";   // 背景：薄い緑
+let socInsText = "#065f46"; // 文字：濃い緑
+
+if (emp.socialInsuranceType === "short_time") {
+    socInsLabel = "短時間";
+    socInsBg = "#fef08a";   // 背景：薄い黄
+    socInsText = "#854d0e"; // 文字：濃い黄
+} else if (emp.socialInsuranceType === "part_time") {
+    socInsLabel = "パート";
+    socInsBg = "#ffedd5";   // 背景：薄いオレンジ
+    socInsText = "#9a3412"; // 文字：濃いオレンジ
+} else if (emp.socialInsuranceType === "none") {
+    socInsLabel = "未加入";
+    socInsBg = "#f3f4f6";   // 背景：薄いグレー
+    socInsText = "#374151"; // 文字：濃いグレー
+}
+
+const badgeStyle = "display: inline-block; padding: 2px 6px; font-size: 10px; font-weight: bold; border-radius: 4px; margin-right: 4px;";
+
 // 💡 この1行を tr.innerHTML を定義する「直前」に差し込んでください
-  tr.innerHTML = `
- <td style="font-size:10px; color:#0056b3; font-weight:bold; vertical-align: top; vertical-align: middle;">
-  <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+tr.innerHTML = `
+<td style="vertical-align: top; padding: 10px 8px;">
+  <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size:10px; color:#0056b3; font-weight:bold;">
     <span>ID: ${empId}</span>
     ${exemptBadgeHTML}
   </div>
-  <strong style="font-size: 14px; color: #333;">${empName}</strong><br>
+  
+  <strong style="font-size: 14px; color: #333; display: block; margin-bottom: 4px;">${empName}</strong>
+  
+  <div style="margin-bottom: 4px;">
+      <span style="${badgeStyle} background-color: #e0f2fe; color: #075985;">
+          ${empType}
+      </span>
+      <span style="${badgeStyle} background-color: ${socInsBg}; color: ${socInsText};">
+          ${socInsLabel}
+      </span>
+  </div>
+
   ${retroAlertHTML}
 </td>
 
@@ -4051,11 +4815,8 @@ tr.setAttribute('data-emp-id', String(empId));
          style="width: 40px; text-align: right; font-size: 14px; border: none; background: transparent; outline: none; cursor: not-allowed; color: #0056b3; font-weight: bold;"> 日
 </td>
 
-
-
 <td style="vertical-align: middle;">
   <div style="display: flex; align-items: baseline; gap: 6px;">
-    <!-- 🌟 titleとcursorを変更して、編集できないことを明示！ -->
     <input type="number" class="input-fixed" value="${masterTotalFixed}" readonly 
            title="固定賃金はマスタCSVからのみ更新可能です" 
            style="width: 80px; text-align: right; font-size: 14px; border: none; background: transparent; outline: none; cursor: not-allowed; color: #0056b3; font-weight: bold;">
@@ -4081,7 +4842,8 @@ tr.setAttribute('data-emp-id', String(empId));
 <td class="calc-total-cell" style="vertical-align: middle; text-align: right; font-weight: bold; color: #0056b3; font-size: 14px; padding-bottom: 6px;">
   <span class="calc-total">${initialTotal.toLocaleString()}</span>
   <span style="font-size: 12px; margin-left: 2px;">円</span>
-  ${adjBadgeHTML} </td>
+  ${adjBadgeHTML} 
+</td>
 
 <td style="background:#fff3cd; padding:8px; min-width:160px; vertical-align: middle;">
   <div style="display:flex; justify-content:space-between; color:#555; font-size:11px;">
@@ -4104,6 +4866,7 @@ tr.setAttribute('data-emp-id', String(empId));
   </div>
         
   ${burdenHTML}
+</td>
 
 <td style="text-align: center; vertical-align: middle;">
   <button class="btn-indiv-save" style="padding:4px 12px; font-size:12px; font-weight:bold; cursor:pointer; background:#0056b3; color:white; border:none; border-radius:4px;">保存</button><br>
@@ -4305,6 +5068,7 @@ saveBtn.addEventListener('click', async () => {
     const recordId = `${currentYear}_${currentMonth}_${empId}`;
     await setDoc(doc(db, "monthly_payroll_records", recordId), {
       employeeId: empId, 
+      companyId: currentCompanyId,
       year: currentYear, 
       month: currentMonth,
       days: valDays, 
@@ -4426,29 +5190,77 @@ saveBtn.addEventListener('click', async () => {
     }
       } catch (e) {}
 
-
-      // 👇==== 今回追加する「労働期間ガイド」の自動更新処理 ====👇
-      try {
-        // ① 会社マスタを取得する
-        const companySnap = await getDoc(doc(db, 'settings', 'company'));
-        const companyMaster = companySnap.exists() ? companySnap.data() : {};
-
-        const cutoffDay = companyMaster.cutoffDay || "末";        
-        const payTiming = companyMaster.paymentMonth || "current"; 
-
-        // ② 変数は竹高さんのコードにある currentYear と currentMonth をそのまま使う！
-        const guideText = getLaborPeriodText(currentYear, currentMonth, cutoffDay, payTiming);
-        
-        // ③ テキストを画面の箱（<div>）に反映
-        const guideDiv = document.getElementById('salary-period-guide');
-        if (guideDiv) {
-            guideDiv.innerText = guideText;
-        }
-      } catch (e) {
-        console.error("ガイドテキスト更新エラー:", e);
+// ==================================================
+    // 🌟 今回追加する「労働期間ガイド」の自動更新処理（会社ID対応版）
+    // ==================================================
+    try {
+      // 🌟 1. 現在ログイン中の会社IDを取得！
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) {
+          console.error("❌ 会社IDが取得できないため、期間計算をスキップしました。");
+          return;
       }
-      // 👆==== ここまで追加 ====👆
 
+      // 🌟 2. その会社の正しい設定ドキュメントを取得（'companies' または 'settings'）
+      // ※ もし元のコードが 'settings' コレクションだった場合は doc(db, 'settings', currentCompanyId) にしてください
+      const companySnap = await getDoc(doc(db, 'companies', currentCompanyId));
+      const companyMaster = companySnap.exists() ? companySnap.data() : {};
+      
+      // 🔍 デバッグ用：F12のコンソールに「実際にDBから取れた中身」を映し出す！
+      console.log("📦 DBから取得した会社マスタ:", companyMaster);
+
+      // 🌟 3. フィールド名の表記ブレ（キャメルケース / HTMLのID名）を両方カバーして救い出す！
+      // 🌟 データの読み取り部分をこれに差し替える！
+      const cutoffDay = companyMaster.cutoffDay || "末"; // DBの cutoffDay を探す
+      const payTiming = companyMaster.paymentMonth || "next"; // DBの paymentMonth を探す
+
+      console.log(`🔍 デバッグ：取得した設定 -> 締め日: ${cutoffDay}, 支払月: ${payTiming}`);
+
+      let startStr = "";
+      let endStr = "";
+
+      // 4. 締め日と支払月に応じて期間を自動計算
+      if (cutoffDay === "末" || cutoffDay === "末日") {
+          if (payTiming === "current" || payTiming === "当月払い") { 
+              startStr = `${currentMonth}月1日`;
+              endStr = `${currentMonth}月末日`;
+          } else { 
+              const prevDate = new Date(currentYear, currentMonth - 2, 1);
+              startStr = `${prevDate.getMonth() + 1}月1日`;
+              endStr = `${prevDate.getMonth() + 1}月末日`;
+          }
+      } else {
+          const cutoff = parseInt(cutoffDay, 10);
+          if (payTiming === "current" || payTiming === "当月払い") { 
+              const prevDate = new Date(currentYear, currentMonth - 2, 1);
+              startStr = `${prevDate.getMonth() + 1}月${cutoff + 1}日`;
+              endStr = `${currentMonth}月${cutoff}日`;
+          } else { 
+              const prevPrevDate = new Date(currentYear, currentMonth - 3, 1);
+              const prevDate = new Date(currentYear, currentMonth - 2, 1);
+              startStr = `${prevPrevDate.getMonth() + 1}月${cutoff + 1}日`;
+              endStr = `${prevDate.getMonth() + 1}月${cutoff}日`;
+          }
+      }
+
+      // 5. テキストを画面の箱（<span>）に反映（無敵仕様）
+      const guideDiv = document.getElementById('salary-period-guide') || document.getElementById('display-target-period');
+      if (guideDiv) {
+          guideDiv.innerText = `（${startStr} 〜 ${endStr} 稼働分）`;
+          guideDiv.style.color = "#0056b3"; // ついでに文字色を青にして目立たせます！
+      } else {
+          console.error("❌ 画面に期間を表示する箱(span)が見つかりません！");
+      }
+      } catch (e) {
+      console.error("ガイドテキスト更新エラー:", e);
+      const guideDiv = document.getElementById('display-target-period');
+      if (guideDiv) guideDiv.innerText = `（期間を取得できませんでした）`;
+      }
+
+
+      // 👆==== ここまで追加 ====👆
+    // 【B】虫眼鏡の叩き起こし魔法（給与タブ用）
+    document.getElementById('search-salary-emp')?.dispatchEvent(new Event('input'));
     };
 
     // 💡 修正2：「給与」タブがクリックされたら、毎回最新データで画面を再構築する！
@@ -4459,7 +5271,36 @@ saveBtn.addEventListener('click', async () => {
       });
     }
 
+    // 🔍 リアルタイム社員検索の制御ロジック
+    const searchSalaryEmp = document.getElementById('search-salary-emp') as HTMLInputElement;
 
+    if (searchSalaryEmp) {
+      searchSalaryEmp.addEventListener('input', (e) => {
+        // 💡 1. 検索ワードを取得して空白をすべて消す！
+        const searchTerm = (e.target as HTMLInputElement).value.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+  
+        // 💡 2. テーブルの行（rows）をすべて取得する！（👈 これが消えちゃってました！）
+        const rows = document.querySelectorAll('#salary-input-body tr');
+  
+        // 💡 3. ループで行を1つずつチェックする
+        rows.forEach((row: any) => {
+          const tr = row as HTMLTableRowElement;
+  
+          // 読み込み中などのシステム行は無視
+          if (tr.cells.length < 2) return;
+  
+          // 💡 4. その行の「一番左のセル(cells[0])」の文字だけを取得して空白を消す！（👈 trはここじゃないと使えません！）
+          const rowText = (tr.cells[0]?.innerText || "").normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+  
+          // 検索ワードが含まれていれば表示、なければ隠す
+          if (rowText.includes(searchTerm)) {
+            tr.style.display = ''; 
+          } else {
+            tr.style.display = 'none'; 
+          }
+        });
+      });
+    }
   
     // ==========================================
     // ボタンのイベント設定
@@ -4507,86 +5348,94 @@ saveBtn.addEventListener('click', async () => {
         downloadGeppenCSV(revisionYear, revisionMonth);
       });
   
-      // ==========================================
-      // 🚀 CSVインポートエンジンの実装 (前回作ったもの)
-      // ==========================================
-      const csvBtn = document.getElementById('btn-csv-import');
-      const csvInput = document.getElementById('csv-upload') as HTMLInputElement;
-      csvBtn?.addEventListener('click', () => csvInput.click());
 // ==========================================
 // 🚀 給与CSVインポートエンジン（内訳フル連動版）
 // ==========================================
-csvInput?.addEventListener('change', (e) => {
-  const file = (e.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-  
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    const text = event.target?.result as string;
-    const lines = text.split('\n');
-    let successCount = 0;
+const csvBtn = document.getElementById('btn-csv-import');
+const csvInput = document.getElementById('csv-upload') as HTMLInputElement;
+
+// 🌟 犯人退治！上の古い addEventListener を消して onclick に一本化！
+if (csvBtn) {
+  csvBtn.onclick = () => {
+    if (csvInput) csvInput.click();
+  };
+}
+
+// 🌟 ファイル読み込み側も onchange で一本化！
+if (csvInput) {
+  csvInput.onchange = (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
     
-    for (let i = 1; i < lines.length; i++) {
-      const currentLine = lines[i];
-      if (!currentLine || !currentLine.trim()) continue; 
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      const lines = text.split('\n');
+      let successCount = 0;
       
-      const cols = currentLine.split(',');
-      // 💡 4列から9列に変更！
-      if (cols.length >= 9) {
-        const targetId = cols[0]?.trim(); 
-        const days = cols[1]?.trim();     
+      for (let i = 1; i < lines.length; i++) {
+        const currentLine = lines[i];
+        if (!currentLine || !currentLine.trim()) continue; 
         
-        // 💡 固定賃金の内訳をそれぞれ数値として取得（空欄なら0）
-        const base = Number(cols[2]?.trim()) || 0;
-        const role = Number(cols[3]?.trim()) || 0;
-        const family = Number(cols[4]?.trim()) || 0;
-        const housing = Number(cols[5]?.trim()) || 0;
-        const fixedOt = Number(cols[6]?.trim()) || 0;
-        const commute = Number(cols[7]?.trim()) || 0;
-        
-        const nonFixed = cols[8]?.trim(); 
-        
-        if (!targetId) continue;
-        const targetRow = document.querySelector(`tr[data-emp-id="${targetId}"]`);
-        
-        if (targetRow) {
-           // 🌟 1. 固定賃金の合計をここで計算！
-           const totalFixed = base + role + family + housing + fixedOt + commute;
+        const cols = currentLine.split(',');
+        // 💡 4列から9列に変更！
+        if (cols.length >= 9) {
+          const targetId = cols[0]?.trim(); 
+          const days = cols[1]?.trim();     
+          
+          // 💡 固定賃金の内訳をそれぞれ数値として取得（空欄なら0）
+          const base = Number(cols[2]?.trim()) || 0;
+          const role = Number(cols[3]?.trim()) || 0;
+          const family = Number(cols[4]?.trim()) || 0;
+          const housing = Number(cols[5]?.trim()) || 0;
+          const fixedOt = Number(cols[6]?.trim()) || 0;
+          const commute = Number(cols[7]?.trim()) || 0;
+          
+          const nonFixed = cols[8]?.trim(); 
+          
+          if (!targetId) continue;
+          const targetRow = document.querySelector(`tr[data-emp-id="${targetId}"]`);
+          
+          if (targetRow) {
+             // 1. 固定賃金の合計をここで計算！
+             const totalFixed = base + role + family + housing + fixedOt + commute;
 
-           // 🌟 2. 画面の入力欄に流し込む
-           (targetRow.querySelector('.input-days') as HTMLInputElement).value = days || "0";
-           (targetRow.querySelector('.input-fixed') as HTMLInputElement).value = String(totalFixed);
-           (targetRow.querySelector('.input-nonfixed') as HTMLInputElement).value = nonFixed || "0";
-           
-           // 再計算のトリガーを引く
-           (targetRow.querySelector('.input-days') as HTMLInputElement).dispatchEvent(new Event('input'));
-           
-           // 🌟 3. 内訳ポップアップ（🔍）の中身も、CSVの数字で作り直して上書きする！
-           const newBreakdownText = `【CSV読込データ】\\n`
-             + `基本給: ${base.toLocaleString()}円\\n`
-             + `役職手当: ${role.toLocaleString()}円\\n`
-             + `家族手当: ${family.toLocaleString()}円\\n`
-             + `住宅手当: ${housing.toLocaleString()}円\\n`
-             + `固定残業代: ${fixedOt.toLocaleString()}円\\n`
-             + `通勤交通費: ${commute.toLocaleString()}円\\n`
-             + `------------------------\\n`
-             + `合計: ${totalFixed.toLocaleString()}円`;
+             // 2. 画面の入力欄に流し込む
+             (targetRow.querySelector('.input-days') as HTMLInputElement).value = days || "0";
+             (targetRow.querySelector('.input-fixed') as HTMLInputElement).value = String(totalFixed);
+             (targetRow.querySelector('.input-nonfixed') as HTMLInputElement).value = nonFixed || "0";
+             
+             // 再計算のトリガーを引く
+             (targetRow.querySelector('.input-days') as HTMLInputElement).dispatchEvent(new Event('input'));
+             
+             // 3. 内訳ポップアップ（🔍）の中身も上書き！
+             const newBreakdownText = `【CSV読込データ】\\n`
+               + `基本給: ${base.toLocaleString()}円\\n`
+               + `役職手当: ${role.toLocaleString()}円\\n`
+               + `家族手当: ${family.toLocaleString()}円\\n`
+               + `住宅手当: ${housing.toLocaleString()}円\\n`
+               + `固定残業代: ${fixedOt.toLocaleString()}円\\n`
+               + `通勤交通費: ${commute.toLocaleString()}円\\n`
+               + `------------------------\\n`
+               + `合計: ${totalFixed.toLocaleString()}円`;
 
-           // 固定賃金用の🔍アイコンを探して、onclickイベントを上書き
-           const breakdownIcon = targetRow.querySelector('.fixed-wage-breakdown-icon');
-           if (breakdownIcon) {
-               breakdownIcon.setAttribute('onclick', `alert('${newBreakdownText}')`);
-           }
-           
-           successCount++;
+             const breakdownIcon = targetRow.querySelector('.fixed-wage-breakdown-icon');
+             if (breakdownIcon) {
+                 breakdownIcon.setAttribute('onclick', `alert('${newBreakdownText}')`);
+             }
+             
+             successCount++;
+          }
         }
       }
-    }
-    alert(`✅ CSVの読み込み完了！\n${successCount}名分の給与データと内訳を自動入力しました。`);
-    csvInput.value = "";
+      alert(`✅ CSVの読み込み完了！\n${successCount}名分の給与データと内訳を自動入力しました。`);
+      csvInput.value = "";
+    };
+    
+    // 🌟 完璧な Shift-JIS 対応
+    reader.readAsText(file, 'Shift_JIS');
   };
-  reader.readAsText(file);
-});
+}
   
 // ==========================================
 // 🏢 従業員マスタ（一括昇給・手当更新）CSVインポートエンジン
@@ -4594,105 +5443,122 @@ csvInput?.addEventListener('change', (e) => {
 const masterCsvBtn = document.getElementById('btn-master-csv-import');
 const masterCsvInput = document.getElementById('master-csv-upload') as HTMLInputElement;
 
-masterCsvBtn?.addEventListener('click', () => masterCsvInput.click());
-
-masterCsvInput?.addEventListener('change', async (e) => {
-  const file = (e.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-
-  if (!confirm('⚠️ 読み込んだCSVデータで、従業員マスタ（基本給・各種手当）を一括で上書き（昇給）します。\nよろしいですか？')) {
-    masterCsvInput.value = "";
-    return;
-  }
-
-  const reader = new FileReader();
-  reader.onload = async (event) => {
-    const text = event.target?.result as string;
-    const lines = text.split('\n');
-    let successCount = 0;
-
-    try {
-      // 💡 Firebaseの全ユーザーを取得し、画面のID（001等）と本物のIDを紐付ける辞書を作成
-      const usersSnap = await getDocs(collection(db, "users"));
-      const usersList: any[] = [];
-      usersSnap.forEach(d => usersList.push({ realFirebaseId: d.id, ...d.data() }));
-
-      const displayIdToRealIdMap = new Map<string, string>();
-      usersList.forEach(emp => {
-        const displayId = String(emp.employeeId || emp.employeeNumber || emp.id);
-        displayIdToRealIdMap.set(displayId, emp.realFirebaseId); 
-      });
-
-      const batch = writeBatch(db);
-
-      for (let i = 1; i < lines.length; i++) {
-        const currentLine = lines[i];
-        if (!currentLine || !currentLine.trim()) continue; 
-        
-        const cols = currentLine.split(',');
-        
-        // =========================================================
-        // 💡 7項目から9項目に変更（緑ボタンと同じCSVフォーマットに統一！）
-        // =========================================================
-        if (cols.length >= 9) {
-          const targetId = cols[0]?.trim(); 
-          // 💡 cols[1] は「基礎日数」なので、マスタデータベースの更新では無視（スルー）します
-          
-          if (!targetId) continue;
-          const realDocId = displayIdToRealIdMap.get(targetId);
-
-          if (!realDocId) {
-             console.warn(`ID: ${targetId} は見つかりませんでした。スキップします。`);
-             continue;
-          }
-
-          // 💡 9列CSVの並びに合わせて、取得する列（インデックス）を 2〜7 にズラす！
-          // (0:ID, 1:日数, 2:基本給, 3:役職, 4:家族, 5:住宅, 6:固定残業, 7:通勤, 8:非固定)
-          const newBase = Number(cols[2]?.trim()) || 0;
-          const newRole = Number(cols[3]?.trim()) || 0;
-          const newFamily = Number(cols[4]?.trim()) || 0;
-          const newHousing = Number(cols[5]?.trim()) || 0;
-          const newFixedOt = Number(cols[6]?.trim()) || 0;
-          const newCommute = Number(cols[7]?.trim()) || 0;
-          // 💡 cols[8] は「非固定賃金」なのでこれもスルーします
-
-          const userRef = doc(db, 'users', realDocId);
-                  
-          batch.set(userRef, {
-            baseHealth: newBase,
-            basePension: newBase,
-            allowances: {
-              role: newRole,
-              family: newFamily,
-              housing: newHousing,
-              fixedOt: newFixedOt, 
-              commute: newCommute  
-            },
-            updatedAt: new Date()
-          }, { merge: true });
-
-          successCount++;
-        }
-      }
-
-      await batch.commit();
-      alert(`🏆 マスタの昇給・更新完了！\n${successCount}名分の基本給・手当マスタを一括で書き換えました。`);
-      
-      // =========================================================
-      // 💡 超重要：更新後、画面を自動でリロードして最新の給与マスタを反映させる！
-      // =========================================================
-      // window.location.reload(); 
-
-    } catch (error) {
-      console.error("マスタCSV更新エラー:", error);
-      alert("マスタの更新中にエラーが発生しました。");
-    } finally {
-      masterCsvInput.value = "";
-    }
+// 🌟 ファントム退治1：addEventListenerをやめて onclick で「絶対上書き」にする！
+if (masterCsvBtn) {
+  masterCsvBtn.onclick = () => {
+    if (masterCsvInput) masterCsvInput.click();
   };
-  
-  reader.readAsText(file);
-});
+}
+
+// 🌟 ファントム退治2：こちらも onchange で「絶対上書き」にする！
+if (masterCsvInput) {
+  masterCsvInput.onchange = async (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+
+    if (!confirm('⚠️ 読み込んだCSVデータで、従業員マスタ（基本給・各種手当）を一括で上書き（昇給）します。\nよろしいですか？')) {
+      masterCsvInput.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      const lines = text.split('\n');
+      let successCount = 0;
+
+      try {
+        // 🌟 1. 会社IDを取得して防壁を張る！
+        const currentCompanyId = localStorage.getItem('current_company_id');
+        if (!currentCompanyId) {
+            alert("会社情報が読み込めないため、一括更新を中止しました。");
+            return;
+        }
+
+        // 🌟 2. 【超重要】「自社」の従業員だけを絞り込んで取得！！！（他社との社員番号被りによる誤爆を完全に防ぐ）
+        const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+        const usersSnap = await getDocs(usersQuery);
+        
+        const usersList: any[] = [];
+        usersSnap.forEach(d => usersList.push({ realFirebaseId: d.id, ...d.data() }));
+
+        const displayIdToRealIdMap = new Map<string, string>();
+        usersList.forEach(emp => {
+          const displayId = String(emp.employeeId || emp.employeeNumber || emp.id);
+          displayIdToRealIdMap.set(displayId, emp.realFirebaseId); 
+        });
+
+        const batch = writeBatch(db);
+
+        for (let i = 1; i < lines.length; i++) {
+          const currentLine = lines[i];
+          if (!currentLine || !currentLine.trim()) continue; 
+          
+          const cols = currentLine.split(',');
+          
+          // =========================================================
+          // 💡 7項目から9項目に変更（緑ボタンと同じCSVフォーマットに統一！）
+          // =========================================================
+          if (cols.length >= 9) {
+            const targetId = cols[0]?.trim(); 
+            // 💡 cols[1] は「基礎日数」なので、マスタデータベースの更新では無視（スルー）します
+            
+            if (!targetId) continue;
+            const realDocId = displayIdToRealIdMap.get(targetId);
+
+            if (!realDocId) {
+                console.warn(`ID: ${targetId} は見つかりませんでした。スキップします。`);
+                continue;
+            }
+
+            // 💡 9列CSVの並びに合わせて、取得する列（インデックス）を 2〜7 にズラす！
+            // (0:ID, 1:日数, 2:基本給, 3:役職, 4:家族, 5:住宅, 6:固定残業, 7:通勤, 8:非固定)
+            const newBase = Number(cols[2]?.trim()) || 0;
+            const newRole = Number(cols[3]?.trim()) || 0;
+            const newFamily = Number(cols[4]?.trim()) || 0;
+            const newHousing = Number(cols[5]?.trim()) || 0;
+            const newFixedOt = Number(cols[6]?.trim()) || 0;
+            const newCommute = Number(cols[7]?.trim()) || 0;
+            // 💡 cols[8] は「非固定賃金」なのでこれもスルーします
+
+            const userRef = doc(db, 'users', realDocId);
+                    
+            batch.set(userRef, {
+              baseHealth: newBase,
+              basePension: newBase,
+              allowances: {
+                role: newRole,
+                family: newFamily,
+                housing: newHousing,
+                fixedOt: newFixedOt, 
+                commute: newCommute  
+              },
+              updatedAt: new Date()
+            }, { merge: true });
+
+            successCount++;
+          }
+        }
+
+        await batch.commit();
+        alert(`🏆 マスタの昇給・更新完了！\n${successCount}名分の基本給・手当マスタを一括で書き換えました。`);
+        
+        // =========================================================
+        // 💡 超重要：更新後、画面を自動でリロードして最新の給与マスタを反映させる！
+        // =========================================================
+        window.location.reload(); 
+
+      } catch (error) {
+        console.error("マスタCSV更新エラー:", error);
+        alert("マスタの更新中にエラーが発生しました。");
+      } finally {
+        masterCsvInput.value = "";
+      }
+    };
+    
+    reader.readAsText(file, 'Shift_JIS');
+  };
+}
 
  // ==========================================
     // 🌟 修正版：月の実績を確定する（一括保存＆月変アラート）
@@ -4733,13 +5599,18 @@ masterCsvInput?.addEventListener('change', async (e) => {
               // =========================================================
               // 🌟 ここから下は竹高さんの「随時改定検知＆タスク生成ロジック」を完全再現！
               // =========================================================
-              const usersSnapshot = await getDocs(collection(db, "users"));
+              const currentCompanyId = localStorage.getItem('current_company_id');
+              if (!currentCompanyId) return;
+
+              const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
+              const usersSnapshot = await getDocs(usersQuery);
               const employees: any[] = [];
-              usersSnapshot.forEach((doc) => employees.push({ id: doc.id, ...doc.data() }));
-  
-              const payrollsSnapshot = await getDocs(collection(db, "monthly_payroll_records"));
+              usersSnapshot.forEach((doc) => employees.push({ id: doc.id, ...doc.data() as any }));
+
+              const payrollQuery = query(collection(db, "monthly_payroll_records"), where("companyId", "==", currentCompanyId));
+              const payrollSnapshot = await getDocs(payrollQuery);
               const payrollRecords: any[] = [];
-              payrollsSnapshot.forEach((doc) => payrollRecords.push(doc.data()));
+              payrollSnapshot.forEach((doc) => payrollRecords.push(doc.data()));
   
               let nextMonth = currentMonth + 1;
               let nextYear = currentYear;
@@ -4764,25 +5635,28 @@ masterCsvInput?.addEventListener('change', async (e) => {
                           displayNames = `${targetNames[0]}、${targetNames[1]} 等 (計${targetNames.length}名)`;
                       }
   
-                      const savedTasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
-                      const taskTitle = `【重要】${nextYear}年${nextMonth}月度 月額変更届の作成および提出 (対象: ${targetNames.length}名)`;
-                      const exists = savedTasks.some((t: any) => t.title === taskTitle);
-  
-                      if (!exists) {
-                          const newTask = {
-                              id: Date.now().toString(),
-                              title: taskTitle,
-                              empName: displayNames,
-                              agency: '年金事務所',
-                              status: 'todo',
-                              deadline: `${nextYear}-${String(nextMonth).padStart(2, '0')}-10`,
-                              source: '自動検知(随時改定)',
-                              createdAt: new Date().toISOString(),
-                              memo: `給与タブにて ${targetNames.length} 名の月変対象者が検出されました。年金事務所へ提出してください。\n\n【対象者全員】\n${targetNames.join('\n')}`
-                          };
-                          savedTasks.push(newTask);
-                          localStorage.setItem('hr_tasks', JSON.stringify(savedTasks));
-                      }
+                  // 🌟 会社IDごとにローカルストレージの保存キーを分ける！
+                  const taskKey = `hr_tasks_${currentCompanyId}`;
+
+                  const savedTasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
+                  const taskTitle = `【重要】${nextYear}年${nextMonth}月度 月額変更届の作成および提出 (対象: ${targetNames.length}名)`;
+                  const exists = savedTasks.some((t: any) => t.title === taskTitle);
+
+                  if (!exists) {
+                      const newTask = {
+                          id: Date.now().toString(),
+                          title: taskTitle,
+                          empName: displayNames,
+                          agency: '年金事務所',
+                          status: 'todo',
+                          deadline: `${nextYear}-${String(nextMonth).padStart(2, '0')}-10`,
+                          source: '自動検知（随時改定）',
+                          createdAt: new Date().toISOString(),
+                          memo: `給与タブにて ${targetNames.length} 名の月変更対象者が検出されました。年金事務所へ提出してください。\n\n【対象者全員】\n${targetNames.join('\n')}`
+                      };
+                      savedTasks.push(newTask);
+                      localStorage.setItem(taskKey, JSON.stringify(savedTasks)); // 🌟 会社別のキーで保存！
+                  }
                   } else {
                       alertBox.style.display = 'none';
                   }
@@ -4800,8 +5674,10 @@ masterCsvInput?.addEventListener('change', async (e) => {
       });
     }
 
-
   
+      // 【A】給与タブのフィルター起動！
+      initSalaryFilterUI('btn-salary-active', 'btn-salary-retired', 'salary-emp-filter', 'salary', loadMonthlyData);
+
   }
 // ==========================================
 // 🎁 賞与（ボーナス）タブ（支給履歴タイムライン・バッジ対応の完全版）
@@ -4831,12 +5707,15 @@ async function initBonusUI() {
       tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; padding: 20px;">🔄 従業員データと【${currentPaymentDate}】の実績を読み込み中...</td></tr>`;
   
       try {
-        const usersSnapshot = await getDocs(collection(db, "users"));
-        const employees: any[] = [];
-        const currentFilter = localStorage.getItem('salaryFilter') || 'active';
+        // ⭕ 書き換え後
+        const currentCompanyId = localStorage.getItem('current_company_id');
+        if (!currentCompanyId) return;
 
-        // 🌟🌟🌟 NEW: 追加した区分のフィルター状態を読み込む（forEachの外で！）🌟🌟🌟
-        const currentTypeFilter = localStorage.getItem('salaryTypeFilter') || 'all';
+        const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
+        const usersSnapshot = await getDocs(usersQuery);
+        const employees: any[] = [];
+        const currentFilter = localStorage.getItem('bonus_status') || 'active';
+        const currentTypeFilter = localStorage.getItem('bonus_type') || 'all';
 
         usersSnapshot.forEach((doc) => {
             const data = doc.data();  
@@ -4869,9 +5748,31 @@ async function initBonusUI() {
               });
               // =========================================================
         
-        const bonusSnapshot = await getDocs(collection(db, "bonus_payroll_records"));
-        const allBonusRecords: any[] = [];
-        bonusSnapshot.forEach((doc) => allBonusRecords.push(doc.data()));
+        // ⭕ 書き換え後
+// 🚨🚨🚨 【最強監視カメラ版】フィルターを外して全部ぶちまける！ 🚨🚨🚨
+console.log(`🚨 [捜査開始] 会社ID【${currentCompanyId}】のデータを金庫から探します！`);
+const allBonusRecords: any[] = [];
+
+try {
+    // where(条件)をあえて外して、金庫の中身を「すべて」強制的に持ってくる
+    const bonusSnapshot = await getDocs(collection(db, "bonus_payroll_records"));
+    
+    let totalCount = 0;
+    bonusSnapshot.forEach((doc) => {
+        totalCount++;
+        const data = doc.data();
+        console.log(`📦 [金庫のデータ ${totalCount}] ID: ${doc.id}`, data);
+        
+        // JavaScript側で手動で会社IDを判定する
+        if (data.companyId === currentCompanyId) {
+            allBonusRecords.push(data);
+        }
+    });
+    console.log(`✅ [捜査結果] この会社の賞与データは ${allBonusRecords.length} 件見つかりました！`);
+} catch (error) {
+    console.error("🚨 読み込み中にエラー発生！", error);
+}
+// 🚨🚨🚨 ここまで 🚨🚨🚨
   
         // 🚀 【新機能】Firebaseの全履歴から「支給日」だけをダブりなく抽出して並べる（赤いカレンダーバッジ）
         const historyContainer = document.getElementById('bonus-history-container');
@@ -4928,9 +5829,27 @@ async function initBonusUI() {
           const cumulativeHealthBonus = pastRecords.reduce((sum, r) => sum + (r.healthTarget || 0), 0);
           const remainingHealthLimit = Math.max(0, HEALTH_BONUS_MAX - cumulativeHealthBonus);
   
-          // 今回の支給日のデータが既に保存されていれば読み戻す
-          const currentRecord = allBonusRecords.find(r => r.employeeId === empId && r.paymentDate === currentPaymentDate);
-          const savedBonusWage = currentRecord ? currentRecord.bonusWage : 0;
+          
+          
+          
+            // 🌟🌟🌟 これを以下の最強コードにまるっと書き換える！ 🌟🌟🌟
+            const safeEmpId = String(emp.employeeId || emp.employeeNumber || emp.id).trim();
+            const safeRealId = String(emp.id).trim();
+
+            const currentRecord = allBonusRecords.find(r => {
+                const rEmpId = String(r.employeeId || "").trim();
+                const rRealId = String(r.realDocId || "").trim();
+                // 画面のID（000033）か、本当のID（aB3x...）のどちらかが一致すればOK！
+                return (rEmpId === safeEmpId || rRealId === safeRealId) && r.paymentDate === currentPaymentDate;
+            });
+
+            const savedBonusWage = currentRecord ? (Number(currentRecord.bonusWage) || 0) : 0;
+
+            // 🕵️‍♂️ 監視カメラ（F12コンソール用）
+            if (savedBonusWage > 0) {
+                console.log(`🎉 照合成功！社員【${safeEmpId}】の保存データ ${savedBonusWage}円 を発見！`);
+            }
+            // 🌟🌟🌟 ここまで 🌟🌟🌟
   
 // 👇＝＝＝ ここから追加（年4回特例の判定） ＝＝＝👇
           // 🌟 算定基礎の期間（前年7月〜今年6月）を特定
@@ -4968,47 +5887,90 @@ async function initBonusUI() {
 
           const tr = document.createElement('tr');
           tr.setAttribute('data-bonus-emp-id', empId);
+
+          // ==========================================
+          // 🌟 UI改善：社保区分のバッジ作成ロジック（賞与画面用）
+          // 💡 変数名の衝突（Viteエラー）を完全に防ぐため、名前に「badge」をつけています
+          // ==========================================
+          const badgeEmpType = emp.empType || emp.contractInfo?.empType || "未設定";
+          
+          let badgeSocInsLabel = "一般";
+          let badgeSocInsBg = "#d1fae5";   // 背景：薄い緑
+          let badgeSocInsText = "#065f46"; // 文字：濃い緑
+
+          if (emp.socialInsuranceType === "short_time") {
+              badgeSocInsLabel = "短時間";
+              badgeSocInsBg = "#fef08a";   // 背景：薄い黄
+              badgeSocInsText = "#854d0e"; // 文字：濃い黄
+          } else if (emp.socialInsuranceType === "part_time") {
+              badgeSocInsLabel = "パート";
+              badgeSocInsBg = "#ffedd5";   // 背景：薄いオレンジ
+              badgeSocInsText = "#9a3412"; // 文字：濃いオレンジ
+          } else if (emp.socialInsuranceType === "none") {
+              badgeSocInsLabel = "未加入";
+              badgeSocInsBg = "#f3f4f6";   // 背景：薄いグレー
+              badgeSocInsText = "#374151"; // 文字：濃いグレー
+          }
+
+          const badgeStyle = "display: inline-block; padding: 2px 6px; font-size: 10px; font-weight: bold; border-radius: 4px; margin-right: 4px;";
+
+          // 💡 1列目だけバッジ仕様に差し替え！2列目以降は竹高さんの完璧なコードをそのまま残しています！
           tr.innerHTML = `
-            <td><strong>${empName}</strong><br><span style="font-size:11px; color:#666;">ID: ${empId}</span></td>
-            <td>
+            <td style="vertical-align: top; padding: 12px 10px;">
+              <strong style="font-size: 14px; color: #333; display: block; margin-bottom: 4px;">${empName}</strong>
+              
+              <div style="margin-bottom: 4px;">
+                  <span style="${badgeStyle} background-color: #e0f2fe; color: #075985;">
+                      ${badgeEmpType}
+                  </span>
+                  <span style="${badgeStyle} background-color: ${badgeSocInsBg}; color: ${badgeSocInsText};">
+                      ${badgeSocInsLabel}
+                  </span>
+              </div>
+              
+              <div style="font-size: 10px; color: #999;">ID: ${empId}</div>
+            </td>
+            
+            <td style="vertical-align: middle;">
               <span style="color:#0056b3; font-weight:bold;">${cumulativeHealthBonus.toLocaleString()} 円</span><br>
               <span style="font-size:10px; color:#666;">(上限573万まで残り: ${remainingHealthLimit.toLocaleString()}円)</span>
-              ${bonusAlertBadge} <!-- ✨✨ ここにバッジを埋め込む！ ✨✨ -->
+              ${bonusAlertBadge} 
             </td>
-            <td><input type="number" class="input-bonus" value="${savedBonusWage}" style="width:120px; padding:4px;"> 円</td>
-            <td style="background:#f8f9fa;">
+            
+            <td style="vertical-align: middle;">
+              <input type="number" class="input-bonus" value="${savedBonusWage}" style="width:120px; padding:4px;"> 円
+            </td>
+            
+            <td style="background:#f8f9fa; vertical-align: middle;">
               健保対象: <span class="calc-health-target">0</span> 円<br>
               介護対象: <span class="calc-care-target">0</span> 円<br>
               厚年対象: <span class="calc-pension-target">0</span> 円
             </td>
-              <td style="background:#fff3cd; padding:8px; min-width:160px;">
+            
+            <td style="background:#fff3cd; padding:8px; min-width:160px; vertical-align: middle;">
               <div style="display:flex; justify-content:space-between; color:#555; font-size:11px;">
-              <span>健康保険:</span><span><span class="calc-health-premium">0</span>円</span>
+                <span>健康保険:</span><span><span class="calc-health-premium">0</span>円</span>
               </div>
-             
               <div style="display:flex; justify-content:space-between; color:#555; font-size:11px;">
-              <span>介護保険:</span><span><span class="calc-care-premium">0</span>円</span>
+                <span>介護保険:</span><span><span class="calc-care-premium">0</span>円</span>
               </div>
-              
               <div style="display:flex; justify-content:space-between; color:#555; font-size:11px;">
-              <span>厚生年金:</span><span><span class="calc-pension-premium">0</span>円</span>
+                <span>厚生年金:</span><span><span class="calc-pension-premium">0</span>円</span>
               </div>
-
               <div style="display:flex; justify-content:space-between; color:#856404; font-size:11px; margin-top: 2px;">
-              <span>子育て支援金:</span><span><span class="calc-child-support">0</span>円</span>
+                <span>子育て支援金:</span><span><span class="calc-child-support">0</span>円</span>
               </div>
-
               <div style="display:flex; justify-content:space-between; font-weight:bold; color:#d32f2f; font-size:12px; margin-top:4px; padding-top:4px; border-top:1px dashed #ccc;">
-              <span>本人負担 計:</span><span><span class="calc-total-premium">0</span>円</span>
+                <span>本人負担 計:</span><span><span class="calc-total-premium">0</span>円</span>
               </div>
-              
               <div style="display:flex; justify-content:space-between; font-size:10px; color:#888; margin-top:2px;">
                 <span>(会社負担 計:</span><span><span class="calc-company-burden">0</span>円)</span>
               </div>
-              </td>
-              
-              <td>
-            <button class="btn-bonus-indiv-save" style="padding:4px 8px; background:#e9ecef; border:1px solid #ccc; border-radius:4px; font-size:11px; cursor:pointer;">保存</button></td>
+            </td>
+            
+            <td style="text-align: center; vertical-align: middle;">
+              <button class="btn-bonus-indiv-save" style="padding:4px 12px; font-weight:bold; background:#0056b3; color:white; border:none; border-radius:4px; font-size:12px; cursor:pointer;">保存</button>
+            </td>
           `;
           tbody.appendChild(tr);
   
@@ -5118,67 +6080,112 @@ async function initBonusUI() {
   
 
 
-// 一括保存
 // ==========================================
-    // 🌟 一括保存（onclick上書き＆連打防止解除の完全版）
-    // ==========================================
-    const batchSaveBtn = document.getElementById('btn-save-bonus-batch') as HTMLButtonElement;
-    
-    if (batchSaveBtn) {
-        // cloneNodeを使わず、onclickで「常に最新の1つの処理」に上書きする最強パターン！
-        batchSaveBtn.onclick = async () => {
-            if (!confirm(`選択された支給日【${currentPaymentDate}】で全員の賞与実績を確定しますか？`)) return;
-            
-            batchSaveBtn.disabled = true; // 連打防止ロック
-            const originalText = batchSaveBtn.innerText;
-            batchSaveBtn.innerText = "保存中...";
-            
-            try {
-                // 保存実行
-                for (const item of currentBonusDataList) { await item.action(); }
-                
-                alert("🌟 すべての賞与履歴の保存が完了し、累計額が再集計されました！");
-                
-                // 🌟🌟🌟 タスク自動生成ロジック 🌟🌟🌟
-                if (currentPaymentDate) {
-                    const savedTasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
-                    const taskTitle = `【重要】${currentPaymentDate}支給分 賞与支払届の作成および提出`;
-                    const exists = savedTasks.some((t: any) => t.title === taskTitle);
-        
-                    if (!exists) {
-                        const deadlineDate = new Date(new Date(currentPaymentDate).getTime() + 5 * 24 * 60 * 60 * 1000);
-                        const deadlineStr = deadlineDate.toISOString().split('T')[0];
-        
-                        const newTask = {
-                            id: Date.now(),
-                            title: taskTitle,
-                            empName: "支給対象者", 
-                            agency: '年金事務所',
-                            status: 'todo',
-                            deadline: deadlineStr, 
-                            source: '自動検知(賞与)',
-                            createdAt: new Date().toISOString(),
-                            memo: `${currentPaymentDate} 支給分の賞与支払届を作成し、e-Govから年金事務所へ提出してください。\n（※提出期限：支給日から5日以内）`,
-                            targetPaymentDate: currentPaymentDate 
-                        };
-                        savedTasks.push(newTask);
-                        localStorage.setItem('hr_tasks', JSON.stringify(savedTasks));
-                    }
-                }
-                
-                // データを再読み込みして画面を更新
-                loadBonusData(); 
-                
-            } catch (error) {
-                console.error("保存エラー:", error);
-                alert("エラーが発生しました。");
-            } finally {
-                // 🌟 処理が終わったら必ずロックを解除！（これで日付を変えて連続テストできます！）
-                batchSaveBtn.disabled = false;
-                batchSaveBtn.innerText = originalText;
+// 🌟 一括保存（絶対に「bonus_payroll_records」に保存する最終決定版！）
+// ==========================================
+const batchSaveBtn = document.getElementById('btn-save-bonus-batch') as HTMLButtonElement;
+
+if (batchSaveBtn) {
+    batchSaveBtn.onclick = async () => {
+        if (!confirm(`選択された支給日【${currentPaymentDate}】で全員の賞与実績を確定しますか？`)) return;
+
+        batchSaveBtn.disabled = true;
+        const originalText = batchSaveBtn.innerText;
+        batchSaveBtn.innerText = "保存中...";
+
+        try {
+            const currentCompanyId = localStorage.getItem('current_company_id');
+            if (!currentCompanyId) return;
+
+            const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+            const usersSnap = await getDocs(usersQuery);
+            const displayIdToRealIdMap = new Map<string, string>();
+            usersSnap.forEach(d => {
+                const data = d.data();
+                const rawId = String(data.employeeId || data.employeeNumber || d.id).trim();
+                displayIdToRealIdMap.set(rawId, d.id);
+                displayIdToRealIdMap.set(String(Number(rawId)), d.id);
+            });
+
+            const rows = document.querySelectorAll('#bonus-input-body tr');
+            const batch = writeBatch(db);
+            let saveCount = 0;
+
+            rows.forEach((row) => {
+                const tr = row as HTMLTableRowElement;
+                const displayId = tr.getAttribute('data-bonus-emp-id')?.trim();
+                if (!displayId) return;
+
+                const realDocId = displayIdToRealIdMap.get(displayId) || displayIdToRealIdMap.get(String(Number(displayId)));
+                if (!realDocId) return;
+
+                const inputEl = tr.querySelector('.input-bonus') as HTMLInputElement;
+                if (!inputEl) return;
+
+                const bonusAmount = Number(inputEl.value) || 0;
+
+                // 🚨🚨🚨 ここが一番重要！！！ 正しい金庫に保存する！ 🚨🚨🚨
+                const docId = `${realDocId}_${currentPaymentDate}`;
+                const bonusRef = doc(db, 'bonus_payroll_records', docId);
+
+                batch.set(bonusRef, {
+                    companyId: currentCompanyId, // 👈 これが超重要！
+                    employeeId: displayId,
+                    realDocId: realDocId,
+                    paymentDate: currentPaymentDate,
+                    bonusWage: bonusAmount,
+                    healthTarget: Math.floor(bonusAmount / 1000) * 1000,
+                    updatedAt: new Date()
+                }, { merge: true });
+
+                console.log(`✅ 社員【${displayId}】の ${bonusAmount}円 を bonus_payroll_records に保存準備完了！`);
+                saveCount++;
+            });
+
+            if (saveCount > 0) {
+                await batch.commit();
             }
-        };
-    }
+
+            alert(`🌟 ${saveCount}名分の賞与履歴の保存が完了し、累計額が再集計されました！`);
+
+            // タスク生成
+            if (currentPaymentDate) {
+              const taskKey = `hr_tasks_${currentCompanyId}`;
+              const savedTasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
+              const taskTitle = `【重要】${currentPaymentDate}支給分 賞与支払届の作成および提出`;
+              const exists = savedTasks.some((t: any) => t.title === taskTitle);
+
+              if (!exists) {
+                  const deadlineDate = new Date(new Date(currentPaymentDate).getTime() + 5 * 24 * 60 * 60 * 1000);
+                  const deadlineStr = deadlineDate.toISOString().split('T')[0];
+                  const newTask = {
+                      id: Date.now(),
+                      title: taskTitle,
+                      empName: "支給対象者",
+                      agency: '年金事務所',
+                      status: 'todo',
+                      deadline: deadlineStr,
+                      source: '自動検知(賞与)',
+                      createdAt: new Date().toISOString(),
+                      memo: `${currentPaymentDate} 支給分の賞与支払届を作成し、e-Govから年金事務所へ提出してください。\n（※提出期限：支給日から5日以内）`,
+                      targetPaymentDate: currentPaymentDate
+                  };
+                  savedTasks.push(newTask);
+                  localStorage.setItem(taskKey, JSON.stringify(savedTasks));
+              }
+            }
+
+            loadBonusData();
+
+        } catch (error) {
+            console.error("❌ 保存エラー発生:", error);
+            alert("エラーが発生しました。");
+        } finally {
+            batchSaveBtn.disabled = false;
+            batchSaveBtn.innerText = originalText;
+        }
+    };
+}
 
 
         // e-Gov用 CSV出力機能（賞与）
@@ -5208,6 +6215,37 @@ async function initBonusUI() {
       } catch (error) { console.error("賞与エラー:", error); }
     };
   
+
+// 🔍 リアルタイム社員検索の制御ロジック（賞与タブ用）
+const searchBonusEmp = document.getElementById('search-bonus-emp') as HTMLInputElement;
+
+if (searchBonusEmp) {
+  searchBonusEmp.addEventListener('input', (e) => {
+    // 1. 全角を半角にし、空白を消す
+    const searchTerm = (e.target as HTMLInputElement).value.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+
+    // 🚨👇 【重要】賞与タブの tbody の ID（おそらく #bonus-input-body や #bonus-list-body）に合わせてください！
+    const rows = document.querySelectorAll('#bonus-input-body tr');
+
+    rows.forEach((row: any) => {
+      const tr = row as HTMLTableRowElement;
+
+      // 読み込み中などのシステム行は無視
+      if (tr.cells.length < 2) return;
+
+      // 2. 1番左の列(cells[0])の文字だけを取得して空白を消す！
+      const rowText = (tr.cells[0]?.innerText || "").normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+
+      if (rowText.includes(searchTerm)) {
+        tr.style.display = ''; 
+      } else {
+        tr.style.display = 'none'; 
+      }
+    });
+  });
+}
+
+
     // 💡 修正2：「賞与支払届」のサブタブがクリックされたら、毎回最新データで画面を再構築する！
     const bonusTabBtn = document.querySelector('[data-sub-target="payroll-bonus"]'); 
     if (bonusTabBtn) {
@@ -5271,15 +6309,14 @@ async function initBonusUI() {
                 // 次も同じファイルを選べるようにリセット
                 csvInput.value = "";
             };
-            reader.readAsText(file);
+            reader.readAsText(file, 'Shift_JIS');
         };
     }
 
     // 🌟 修正：ここで関数を実行して、画面を出す！
     loadBonusData();
 
-    // 🌟 修正：フィルターボタンが押された時に、この「loadBonusData」が動くように設定！
-    initSalaryFilterUI('btn-bonus-active', 'btn-bonus-retired', '', loadBonusData);
+    initSalaryFilterUI('btn-bonus-active', 'btn-bonus-retired', 'bonus-emp-filter', 'bonus', loadBonusData);
   }
 
 // ==========================================
@@ -5290,18 +6327,24 @@ async function initBonusUI() {
 async function initSanteiUI() {
     const tbody = document.getElementById('santei-list-body');
     if (!tbody) return;
-  
+    // 🌟🌟🌟 ① ここから箱（関数）を作り始める！ 🌟🌟🌟
+    const loadSanteiData = async () => {
+
     tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 20px; color: #666;">🔄 Firebaseから4月〜6月の給与実績を読み込み中...</td></tr>`;
   
     try {
       // 1️⃣ Firebaseから「従業員マスタ(users)」をごっそり取得
      // Firebaseから「従業員マスタ(users)」をごっそり取得
-    const usersSnapshot = await getDocs(collection(db, "users"));
+     const currentCompanyId = localStorage.getItem('current_company_id');
+     if (!currentCompanyId) return;
+     
+     // 🌟 usersコレクションにフィルター
+     const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
+     const usersSnapshot = await getDocs(usersQuery);
     const employees: any[] = [];
     
-    const currentFilter = localStorage.getItem('salaryFilter') || 'active';
-    // 🌟🌟🌟 NEW: 追加した区分のフィルター状態を読み込む（forEachの外で！）🌟🌟🌟
-    const currentTypeFilter = localStorage.getItem('salaryTypeFilter') || 'all';
+    const currentFilter = localStorage.getItem('santei_status') || 'active';
+    const currentTypeFilter = localStorage.getItem('santei_type') || 'all';
 
     usersSnapshot.forEach((doc) => {
       // 🌟 usersSnapshot.forEach(...) が終わった直後にこれを貼り付ける！
@@ -5325,15 +6368,24 @@ async function initSanteiUI() {
         employees.push({ id: doc.id, ...data });
     });
       // 2️⃣ Firebaseから「毎月の給与実績(monthly_payroll_records)」をごっそり取得
-      const payrollSnapshot = await getDocs(collection(db, "monthly_payroll_records"));
+      const payrollQuery = query(collection(db, "monthly_payroll_records"), where("companyId", "==", currentCompanyId));
+　　　const payrollSnapshot = await getDocs(payrollQuery);
       const payrollRecords: any[] = [];
       payrollSnapshot.forEach((doc) => payrollRecords.push(doc.data()));
   
       // 👇＝＝＝ ここに追加！ ＝＝＝👇
       // 🌟 Firebaseから「賞与実績(bonus_payroll_records)」もごっそり取得
-      const bonusSnapshot = await getDocs(collection(db, "bonus_payroll_records"));
+              // 🌟 bonus_payroll_recordsコレクションにもフィルター！
+        // 🌟🌟🌟 新しい読み込み処理（サブコレクション対応版） 🌟🌟🌟
+      
+        // 🌟 算定基礎の中にある賞与読み込みを元に戻す！
+      const bonusQuery = query(collection(db, "bonus_payroll_records"), where("companyId", "==", currentCompanyId));
+      const bonusSnapshot = await getDocs(bonusQuery);
       const allBonusRecords: any[] = [];
       bonusSnapshot.forEach((doc) => allBonusRecords.push(doc.data()));
+
+
+        // 🌟🌟🌟 ここまで 🌟🌟🌟
       // ☝＝＝＝＝＝＝＝＝＝＝＝＝＝＝☝
 
       tbody.innerHTML = '';
@@ -5373,24 +6425,35 @@ async function initSanteiUI() {
       const mayData = payrollRecords.find(r => String(r.employeeId) === String(empId) && Number(r.year) === 2026 && Number(r.month) === 5) || { totalWage: 0, days: 0, adjustmentAmount: 0, adjustmentReason: "" };
       const junData = payrollRecords.find(r => String(r.employeeId) === String(empId) && Number(r.year) === 2026 && Number(r.month) === 6) || { totalWage: 0, days: 0, adjustmentAmount: 0, adjustmentReason: "" };
 
-      // 👇＝＝＝ ここに追加！ ＝＝＝👇
-            // 🌟🌟🌟 年4回賞与特例の判定ロジック 🌟🌟🌟
-            const santeiYear = 2026; // ※処理する年
-            const periodStart = `${santeiYear - 1}-07-01`; 
-            const periodEnd = `${santeiYear}-06-30`;
+// 👇＝＝＝ ここから追加（年4回特例の判定） ＝＝＝👇
+const santeiYear = 2026; // ※処理する年
+const periodStart = `${santeiYear - 1}-07-01`; 
+const periodEnd = `${santeiYear}-06-30`;
 
-            const empBonuses = allBonusRecords.filter(b => 
-                String(b.employeeId) === String(empId) && 
-                b.paymentDate >= periodStart && 
-                b.paymentDate <= periodEnd
-            );
+// 🌟🌟🌟 算定基礎用「絶対見つけるマン」にアップデート！ 🌟🌟🌟
+const safeEmpId = String(emp.employeeId || emp.employeeNumber || emp.id).trim();
+const safeRealId = String(emp.id).trim();
 
-            let monthlyBonusAddition = 0;
-            if (empBonuses.length >= 4) {
-                const totalBonus = empBonuses.reduce((sum, b) => sum + Number(b.bonusWage || 0), 0);
-                monthlyBonusAddition = Math.floor(totalBonus / 12); // 千円未満切り捨て前に12ヶ月で割る
-            }
-            // ☝＝＝＝＝＝＝＝＝＝＝＝＝＝＝☝
+const empBonuses = allBonusRecords.filter(b => {
+    const rEmpId = String(b.employeeId || "").trim();
+    const rRealId = String(b.realDocId || "").trim();
+    // 画面のIDか、本当のIDのどちらかが一致すればOK！
+    const isMatch = (rEmpId === safeEmpId || rRealId === safeRealId);
+    return isMatch && b.paymentDate >= periodStart && b.paymentDate <= periodEnd;
+});
+
+// 🕵️‍♂️ 監視カメラ（F12コンソール用：ちゃんと見つかったか確認！）
+if (empBonuses.length > 0) {
+    console.log(`🎉 社員【${safeEmpId}】の対象賞与を ${empBonuses.length}件 発見！`, empBonuses);
+}
+
+let monthlyBonusAddition = 0;
+if (empBonuses.length >= 4) {
+    const totalBonus = empBonuses.reduce((sum, b) => sum + Number(b.bonusWage || 0), 0);
+    monthlyBonusAddition = Math.floor(totalBonus / 12); // 千円未満切り捨て前に12ヶ月で割る
+    console.log(`🔥 年4回特例発動！ 月額に ${monthlyBonusAddition}円 加算します！`);
+}
+// ☝＝＝＝＝＝＝＝＝＝＝＝＝＝＝☝
 
  // =========================================================
       // 🌟🌟🌟 ハイブリッド判定 ＆ ノイズキャンセル融合エンジン 🌟🌟🌟
@@ -5534,20 +6597,63 @@ if (validWages.length === 0) {
 }
 
 // 🎨 テーブル行を生成
+// ==========================================
+// 🌟 UI改善：社保区分のバッジ作成ロジック（算定基礎用）
+// ==========================================
+// 💡 ループ内のデータ変数（emp や res, cloudData など）に合わせて、
+// 「emp.socialInsuranceType」の部分は適宜書き換えてください！
+let santeiBadgeLabel = "一般";
+let santeiBadgeBg = "#d1fae5";   // 背景：薄い緑
+let santeiBadgeText = "#065f46"; // 文字：濃い緑
+
+if (emp.socialInsuranceType === "short_time") {
+    santeiBadgeLabel = "短時間";
+    santeiBadgeBg = "#fef08a";   // 背景：薄い黄
+    santeiBadgeText = "#854d0e"; // 文字：濃い黄
+} else if (emp.socialInsuranceType === "part_time") {
+    santeiBadgeLabel = "パート";
+    santeiBadgeBg = "#ffedd5";   // 背景：薄いオレンジ
+    santeiBadgeText = "#9a3412"; // 文字：濃いオレンジ
+} else if (emp.socialInsuranceType === "none") {
+    santeiBadgeLabel = "未加入";
+    santeiBadgeBg = "#f3f4f6";   // 背景：薄いグレー
+    santeiBadgeText = "#374151"; // 文字：濃いグレー
+}
+
+const badgeStyle = "display: inline-block; padding: 2px 6px; font-size: 10px; font-weight: bold; border-radius: 4px; margin-right: 4px;";
+
+// 💡 ここから tr の作成！
 const tr = document.createElement('tr');
 tr.innerHTML = `
-    <td style="padding: 12px;"><strong>${empName}</strong><br><span style="font-size:11px; color:#666;">ID: ${empId} / ${empType}</span></td>
-    <td style="background:#f8f9fa; padding: 12px;">${aprHtml}</td>
-    <td style="background:#f8f9fa; padding: 12px;">${mayHtml}</td>
-    <td style="background:#f8f9fa; padding: 12px;">${junHtml}</td>
-    <td style="font-weight:bold; color:#0056b3; background:#e3f2fd; padding: 12px;">
+    <td style="vertical-align: top; padding: 12px; border-bottom: 1px solid #dee2e6;">
+        <strong style="font-size: 14px; color: #333; display: block; margin-bottom: 4px;">${empName}</strong>
+        
+        <div style="margin-bottom: 4px;">
+            <span style="${badgeStyle} background-color: #e0f2fe; color: #075985;">
+                ${empType}
+            </span>
+            <span style="${badgeStyle} background-color: ${santeiBadgeBg}; color: ${santeiBadgeText};">
+                ${santeiBadgeLabel}
+            </span>
+        </div>
+        
+        <div style="font-size: 10px; color: #999;">ID: ${empId}</div>
+    </td>
+    
+    <td style="background:#f8f9fa; padding: 12px; vertical-align: middle; border-bottom: 1px solid #dee2e6;">${aprHtml}</td>
+    <td style="background:#f8f9fa; padding: 12px; vertical-align: middle; border-bottom: 1px solid #dee2e6;">${mayHtml}</td>
+    <td style="background:#f8f9fa; padding: 12px; vertical-align: middle; border-bottom: 1px solid #dee2e6;">${junHtml}</td>
+    
+    <td style="font-weight:bold; color:#0056b3; background:#e3f2fd; padding: 12px; vertical-align: middle; border-bottom: 1px solid #dee2e6;">
         ${averageWage.toLocaleString()} 円<br>
         <span style="font-size:10px; color:#666;">(${validWages.length}ヶ月平均)</span>
     </td>
-    <td style="background:#fff3cd; padding: 12px;">
+    
+    <td style="background:#fff3cd; padding: 12px; vertical-align: middle; border-bottom: 1px solid #dee2e6;">
         ${resultHtml}
     </td>
-    <td style="text-align: center; padding: 12px;">
+    
+    <td style="text-align: center; padding: 12px; vertical-align: middle; border-bottom: 1px solid #dee2e6;">
         ${statusBadge}
     </td>
 `;
@@ -5565,7 +6671,35 @@ if (exportData) {
 
 });
   
+// 🔍 リアルタイム社員検索の制御ロジック（算定基礎タブ用）
+  const searchSanteiEmp = document.getElementById('search-santei-emp') as HTMLInputElement;
 
+  if (searchSanteiEmp) {
+    searchSanteiEmp.addEventListener('input', (e) => {
+// 💡 1. 検索ワード（入力）の全角を半角にし、小文字化し、空白を消す！
+const searchTerm = (e.target as HTMLInputElement).value.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+
+      // 🚨👇 【重要】実際の算定タブのテーブルの tbody の ID に合わせてください！
+      // （例: '#santei-input-body tr' や '#santei-table-body tr' など）
+      const rows = document.querySelectorAll('#santei-list-body tr');
+
+      rows.forEach((row: any) => {
+        const tr = row as HTMLTableRowElement;
+
+        // 読み込み中などのシステム行は無視
+        if (tr.cells.length < 2) return;
+
+       // 💡 2. 表の文字（データ）も全角を半角にし、小文字化し、空白を消す！
+　　　　const rowText = (tr.cells[0]?.innerText || "").normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+
+        if (rowText.includes(searchTerm)) {
+          tr.style.display = ''; 
+        } else {
+          tr.style.display = 'none'; 
+        }
+      });
+    });
+  }
 
 // 🌟 プルダウンの選択に応じて、金額や本来の月の入力をロック/解除する関数
 (window as any).handleAdjustmentChange = function(empId: string) {
@@ -5657,33 +6791,43 @@ if (exportData) {
       }
 
       try {
-          // 🌟 1. Firebaseから会社情報を取得 (e-Gov連携用)
-          let companyMaster: any = {};
-          const docSnap = await getDoc(doc(db, 'settings', 'company'));
-          if (docSnap.exists()) {
-              companyMaster = docSnap.data();
-          } else {
-              alert("⚠️ 会社情報が設定されていません。「法定料率・マスター」タブで保存してください。");
-              return;
-          }
+        // 🌟 0. 会社IDを取得して防壁を張る！
+        const currentCompanyId = localStorage.getItem('current_company_id');
+        if (!currentCompanyId) {
+            alert("会社情報が読み込めません。");
+            return;
+        }
 
-          // 🌟 2. 従業員情報を一括取得（マイナンバーや基礎年金番号のため）
-          const localMasterDB = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
-          const usersSnap = await getDocs(collection(db, 'users'));
-          const firestoreUsersMap: any = {};
-          usersSnap.forEach((d) => {
-              const data = d.data();
-              const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
-              firestoreUsersMap[fullName] = data;
-              firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
-          });
+        // 🌟 1. 【修正】会社情報を「自社専用の箱」から取得！
+        let companyMaster: any = {};
+        const docSnap = await getDoc(doc(db, 'companies', currentCompanyId));
+        if (docSnap.exists()) {
+            companyMaster = docSnap.data();
+        } else {
+            alert("⚠️ 会社情報が設定されていません。「法定料率・マスター」タブで保存してください。");
+            return;
+        }
+
+        // 🚫 【削除完了】危険なローカルストレージ（hr_employee_master）の呼び出しは消去しました！
+
+        // 🌟 2. 【超重要】必ず「自社」の従業員だけで絞り込んで取得！！！
+        const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+        const usersSnap = await getDocs(usersQuery);
+        
+        const firestoreUsersMap: any = {};
+        usersSnap.forEach((d) => {
+            const data = d.data();
+            const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+            firestoreUsersMap[fullName] = data;
+            firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
+        });
 
           // メタデータと和暦エンジン
           const csvMeta = {
-              mediaSeq: "001",
-              creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
-              repCode: "22223"
-          };
+            mediaSeq: "001",
+            creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
+            repCode: "22157" // 🔥 修正：「22223(賞与)」から「22157(算定基礎)」に変更！
+        };
 
           const getEgoveDate = (dateStr: string) => {
               if (!dateStr) return { gengo: "", date: "" };
@@ -5696,10 +6840,38 @@ if (exportData) {
               return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
           };
 
+// ==========================================
+          // 🌟 会社情報の最強抽出エンジン（算定基礎にも搭載！）
+          // ==========================================
+          const prefCode = companyMaster.prefCode || (companyMaster.mainBranch?.prefCode) || "";
+          const cityCode = companyMaster.cityCode || (companyMaster.mainBranch?.cityCode) || "";
+          const officeSymbol = companyMaster.officeSymbol || (companyMaster.mainBranch?.officeSymbol) || "";
+          const officeNumber = companyMaster.officeNumber || (companyMaster.mainBranch?.officeNumber) || "";
+          const address = companyMaster.address || (companyMaster.mainBranch?.address) || "";
+
+          // 郵便番号のハイフン分割
+          const rawZip = companyMaster.zipCode || (companyMaster.mainBranch?.zipCode) || "";
+          const zipSplit = rawZip.split('-');
+          const zip1 = zipSplit[0] || "";
+          const zip2 = zipSplit[1] || "";
+
+          // 電話番号のハイフン分割
+          const rawTel = companyMaster.tel || companyMaster.phone || (companyMaster.mainBranch?.tel) || "";
+          const telSplit = rawTel.split('-');
+          const tel1 = telSplit[0] || "";
+          const tel2 = telSplit[1] || "";
+          const tel3 = telSplit[2] || "";
+
+          // 会社名と代表者名
+          const compName = companyMaster.companyName || companyMaster.name || "";
+          const repName = companyMaster.employerName || companyMaster.representativeName || "";
+
+          // ==========================================
           // 🌟 管理レコード（[kanri] ブロック）生成
-          let csvContent = `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
+          // ==========================================
+          let csvContent = `${prefCode},${cityCode},${officeSymbol},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
           csvContent += "[kanri]\n,001\n";
-          csvContent += `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${companyMaster.officeNumber || ""},${companyMaster.zip1 || ""},${companyMaster.zip2 || ""},${companyMaster.address || ""},${companyMaster.companyName || ""},${companyMaster.employerName || ""},${companyMaster.tel1 || ""},${companyMaster.tel2 || ""},${companyMaster.tel3 || ""}\n`;
+          csvContent += `${prefCode},${cityCode},${officeSymbol},${officeNumber},${zip1},${zip2},${address},${compName},${repName},${tel1},${tel2},${tel3}\n`;
           csvContent += "[data]\n";
 
           // 適用年月（算定基礎なので通常は本年の「9月」固定）
@@ -5707,26 +6879,32 @@ if (exportData) {
           const applyEgove = getEgoveDate(`${applyYear}-09-01`);
 
           // 🌟 データレコード（全54項目の配列生成ループ）
+          // 🌟 消えちゃっていた「ループの始まり」を復活！
           finalSanteiBatchList.forEach(res => {
-              const targetEmpName = res.empName.trim();
-              const localData = localMasterDB[targetEmpName] || localMasterDB[targetEmpName.replace(/\s+/g, '')] || {};
-              const cloudData = firestoreUsersMap[targetEmpName] || firestoreUsersMap[targetEmpName.replace(/\s+/g, '')] || {};
+            const targetEmpName = res.empName.trim();
+            
+            // 🚫 危険なローカルデータ（localMasterDB）は消去したので、安全なクラウド（cloudData）だけを取得！
+            const cloudData = firestoreUsersMap[targetEmpName] || firestoreUsersMap[targetEmpName.replace(/\s+/g, '')] || {};
 
-              const empid = res.empId || localData.empId || cloudData.employeeId || "";
-              const kanji = targetEmpName;
-              const kana = cloudData.lastNameKana ? `${cloudData.lastNameKana} ${cloudData.firstNameKana}`.trim() : (localData.kana || "");
-              const myNumber = cloudData.myNumber || localData.myNumber || "";
-              const pensionNum = cloudData.basicPensionNumber || cloudData.pensionNumber || localData.pensionNumber || "";
-              const birthEGov = getEgoveDate(cloudData.birthdate || localData.dob || "");
+            // 🌟 localData への参照をすべて削除して、cloudData に一本化！
+            const empId = res.empId || cloudData.employeeId || "";
+            const kanji = targetEmpName;
+            const kana = cloudData.lastNameKana ? `${cloudData.lastNameKana} ${cloudData.firstNameKana}`.trim() : "";
+            const myNumber = cloudData.myNumber || "";
+            const pensionNum = cloudData.basicPensionNumber || cloudData.pensionNumber || "";
+            
+// 🌟 2つ目の修正：getEgovDate ではなく getEgoveDate（eを入れる）にする！
+            // 🔥 さらに修正：birthdate(小文字)とbirthDate(大文字)の両方を探す！
+            const rawDob = cloudData.birthdate || cloudData.birthDate || "";
+            const birthEGov = getEgoveDate(rawDob);
 
-              // Step 1 で持たせた月ごとの給与データを展開
-              const apr = res.aprData || { days: 0, totalWage: 0 };
-              const may = res.mayData || { days: 0, totalWage: 0 };
-              const jun = res.junData || { days: 0, totalWage: 0 };
+            // Step 1 で持たせた月ごとの給与データを展開
+            const apr = res.aprData || { days: 0, totalWage: 0 };
+            const may = res.mayData || { days: 0, totalWage: 0 };
+            const jun = res.junData || { days: 0, totalWage: 0 };
 
-              // 🌟 NEW: 項番49・50のハイブリッドフラグ判定！
-              // （マスタデータから正確な社保区分を取得します）
-              const socInsType = cloudData.socialInsuranceType || localData.socialInsuranceType || "regular";
+            // 🌟 ここも localData を削除！
+            const socInsType = cloudData.socialInsuranceType || "regular";
               let shortTimeFlag = ""; // 項番49 (短時間労働者 11日基準)
               let partTimeFlag = "";  // 項番50 (パートタイマー 15日基準)
 
@@ -5765,7 +6943,7 @@ if (exportData) {
                   companyMaster.cityCode || "",       // 3. 郡市区符号
                   companyMaster.officeSymbol || "",   // 4. 事業所記号
                   companyMaster.officeNumber || "",   // 5. 事業所番号
-                  empid,                              // 6. 被保険者整理番号
+                  empId,                              // 6. 被保険者整理番号
                   kana,                               // 7. 氏名カナ
                   kanji,                              // 8. 氏名漢字
                   birthEGov.gengo,                    // 9. 生年月日_元号
@@ -5806,17 +6984,30 @@ if (exportData) {
               csvContent += row.join(",") + "\n";
           });
 
-          // BOM付きで SHFD0006.CSV として出力
-          const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-          const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
-          const link = document.createElement("a");
-          link.setAttribute("href", URL.createObjectURL(blob));
-          link.setAttribute("download", "SHFD0006.CSV"); // 🌟ガチ仕様ファイル名
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          
-          alert(`✅ ${finalSanteiBatchList.length}件の算定基礎届(e-Gov仕様)を出力しました！`);
+        // 🌟 【e-Gov完全仕様】文字列をShift-JISに変換する魔法！
+                  // 1. まず文字列を文字コードの配列に変換
+                  const unicodeArray = Encoding.stringToCode(csvContent);
+                  
+                  // 2. UNICODE から SJIS に変換
+                  const sjisArray = Encoding.convert(unicodeArray, {
+                      to: 'SJIS',
+                      from: 'UNICODE'
+                  });
+                  
+                  // 3. Uint8Array に変換（BOMは絶対に入れない！）
+                  const uint8Array = new Uint8Array(sjisArray);
+
+                  // 4. Blobを作成し、charsetをShift_JISに指定
+                  const blob = new Blob([uint8Array], { type: 'text/csv;charset=Shift_JIS;' });
+                  
+                  const link = document.createElement("a");
+                  link.setAttribute("href", URL.createObjectURL(blob));
+                  link.setAttribute("download", "SHFD0006.CSV"); // 🌟ガチ仕様ファイル名
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  
+                  alert(`✅ ${finalSanteiBatchList.length}件の算定基礎届(e-Gov仕様)を Shift-JIS で出力しました！`);
 
       } catch (error) {
           console.error("CSV出力エラー:", error);
@@ -5824,13 +7015,19 @@ if (exportData) {
       }
   });
 
-  
+    // 🌟🌟🌟 ② 【B】虫眼鏡の魔法はココ（catchの直前）に入れる！ 🌟🌟🌟
+    document.getElementById('search-santei-emp')?.dispatchEvent(new Event('input'));
     } catch (error) {
       console.error("算定基礎エラー:", error);
       tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: red;">実績データの取得に失敗しました。</td></tr>`;
     }
+      }; // 🌟🌟🌟 ③ ここで箱（loadSanteiData）を閉じる！ 🌟🌟🌟
 
-    
+
+        // 🌟🌟🌟 ④ 画面を開いた時に1回だけ箱を開ける（実行する） 🌟🌟🌟
+        loadSanteiData();
+    // 【A】算定タブのフィルター起動！
+    initSalaryFilterUI('btn-santei-active', 'btn-santei-retired', 'santei-emp-filter', 'santei', loadSanteiData);
   }
 
 
@@ -6059,6 +7256,7 @@ window.addEventListener('DOMContentLoaded', () => {
       tabToClick.click(); 
     }
   }, 100); // 💡 画面の描画が少し落ち着いた0.1秒後に発動させるのが安定のコツ
+  
 });
 
 
@@ -6069,23 +7267,29 @@ async function checkAndCreateSanteiTask() {
   const currentYear = now.getFullYear();
 
   if (currentMonth === 6) {
-    const savedTasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
+    // 🌟 1. 会社IDを取得して専用キーを作成！
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) return;
+    const taskKey = `hr_tasks_${currentCompanyId}`;
+
+    // 🌟 2. 専用キーで読み込み！
+    const savedTasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
 
     // 🌟 重複チェック：エラーを防ぐために魔法の「?」を追加！
     const exists = savedTasks.some((t: any) => 
       t.title === '【重要・全社】算定基礎届の作成および提出' && 
-      t.deadline?.startsWith(`${currentYear}`) // 👈 ここに「?」を足しました！
+      t.deadline?.startsWith(`${currentYear}`)
     );
 
     if (!exists) {
       console.log("📝 今年の算定タスクを作成します！");
       
       const newTask = {
-        id: Date.now(),                          // 必須：絶対に「数字」にする！
+        id: Date.now(),
         title: '【重要・全社】算定基礎届の作成および提出',
         empName: '全従業員',
         agency: '年金事務所',
-        status: 'todo',                          // 必須：'todo'にする！
+        status: 'todo',
         deadline: `${currentYear}-07-10`,
         source: '自動検知(定時決定)',
         createdAt: new Date().toISOString(),
@@ -6093,15 +7297,12 @@ async function checkAndCreateSanteiTask() {
       };
 
       savedTasks.push(newTask);
-      localStorage.setItem('hr_tasks', JSON.stringify(savedTasks));
+      localStorage.setItem(taskKey, JSON.stringify(savedTasks)); // 🌟 3. 専用キーで保存！
 
       console.log(`🎉 ${currentYear}年の算定基礎届タスクを自動生成しました！`);
       window.location.reload(); 
-      
-    } else {
-      console.log("✅ すでに今年の算定タスクは作成済み（存在している）ため、スキップしました。");
     }
-  }
+}
 }
 
 
@@ -6111,7 +7312,10 @@ async function downloadGeppenCSV(targetYear: number, targetMonth: number, target
   try {
       // 1. Firebaseから会社情報を取得 (e-Gov連携用)
       let companyMaster: any = {};
-      const docSnap = await getDoc(doc(db, 'settings', 'company'));
+     // ⭕ 書き換え後
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) return;
+      const docSnap = await getDoc(doc(db, 'companies', currentCompanyId)); // 自分の会社の箱
       if (docSnap.exists()) {
           companyMaster = docSnap.data();
       } else {
@@ -6120,7 +7324,8 @@ async function downloadGeppenCSV(targetYear: number, targetMonth: number, target
       }
 
       // 2. 従業員情報と給与履歴を一括取得
-      const usersSnapshot = await getDocs(collection(db, "users"));
+      const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
+      const usersSnapshot = await getDocs(usersQuery);
       const firestoreUsersMap: any = {};
       usersSnapshot.forEach((d) => {
           const data = d.data();
@@ -6129,37 +7334,64 @@ async function downloadGeppenCSV(targetYear: number, targetMonth: number, target
           firestoreUsersMap[fullName.replace(/\s+/g, '')] = data;
       });
 
-      const payrollsSnapshot = await getDocs(collection(db, "monthly_payroll_records"));
+      const payrollQuery = query(collection(db, "monthly_payroll_records"), where("companyId", "==", currentCompanyId));
+　　　　const payrollsSnapshot = await getDocs(payrollQuery);
       const payrollRecords: any[] = [];
       payrollsSnapshot.forEach((doc) => payrollRecords.push(doc.data()));
       const localMasterDB = JSON.parse(localStorage.getItem('hr_employee_master') || '{}');
 
-      // メタデータと和暦エンジン
+ // ==========================================
+      // 🌟 1. e-Gov用メタデータと和暦エンジン
+      // ==========================================
       const csvMeta = {
-          mediaSeq: "001",
-          creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
-          repCode: "22223"
-      };
+        mediaSeq: "001",
+        creationDate: new Date().toISOString().substring(0, 10).replace(/-/g, ''),
+        repCode: "22217" // 🔥 修正：月額変更届（随時改定）のコードは「22217」です！
+    };
 
-      const getEgoveDate = (dateStr: string) => {
-          if (!dateStr) return { gengo: "", date: "" };
-          const d = new Date(dateStr);
-          const y = d.getFullYear();
-          const m = String(d.getMonth() + 1).padStart(2, '0');
-          const day = String(d.getDate()).padStart(2, '0');
-          if (y >= 2019) return { gengo: "9", date: String(y - 2018).padStart(2, '0') + m + day };
-          if (y >= 1989) return { gengo: "7", date: String(y - 1988).padStart(2, '0') + m + day };
-          return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
-      };
+    const getEgoveDate = (dateStr: string) => {
+        if (!dateStr) return { gengo: "", date: "" };
+        const d = new Date(dateStr);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        if (y >= 2019) return { gengo: "9", date: String(y - 2018).padStart(2, '0') + m + day };
+        if (y >= 1989) return { gengo: "7", date: String(y - 1988).padStart(2, '0') + m + day };
+        return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
+    };
 
-      // 管理レコード生成
-      let csvContent = `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
-      csvContent += "[kanri]\n,001\n";
-      csvContent += `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${companyMaster.officeNumber || ""},${companyMaster.zip1 || ""},${companyMaster.zip2 || ""},${companyMaster.address || ""},${companyMaster.companyName || ""},${companyMaster.employerName || ""},${companyMaster.tel1 || ""},${companyMaster.tel2 || ""},${companyMaster.tel3 || ""}\n`;
-      csvContent += "[data]\n";
+    // ==========================================
+    // 🌟 2. 会社情報の最強抽出エンジン（月変にも搭載！）
+    // ==========================================
+    const prefCode = companyMaster.prefCode || (companyMaster.mainBranch?.prefCode) || "";
+    const cityCode = companyMaster.cityCode || (companyMaster.mainBranch?.cityCode) || "";
+    const officeSymbol = companyMaster.officeSymbol || (companyMaster.mainBranch?.officeSymbol) || "";
+    const officeNumber = companyMaster.officeNumber || (companyMaster.mainBranch?.officeNumber) || "";
+    const address = companyMaster.address || (companyMaster.mainBranch?.address) || "";
 
-      let outputCount = 0;
+    const rawZip = companyMaster.zipCode || (companyMaster.mainBranch?.zipCode) || "";
+    const zipSplit = rawZip.split('-');
+    const zip1 = zipSplit[0] || "";
+    const zip2 = zipSplit[1] || "";
 
+    const rawTel = companyMaster.tel || companyMaster.phone || (companyMaster.mainBranch?.tel) || "";
+    const telSplit = rawTel.split('-');
+    const tel1 = telSplit[0] || "";
+    const tel2 = telSplit[1] || "";
+    const tel3 = telSplit[2] || "";
+
+    const compName = companyMaster.companyName || companyMaster.name || "";
+    const repName = companyMaster.employerName || companyMaster.representativeName || "";
+
+    // ==========================================
+    // 🌟 3. 管理レコード（[kanri]ブロック）生成
+    // ==========================================
+    let csvContent = `${prefCode},${cityCode},${officeSymbol},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
+    csvContent += "[kanri]\n,001\n";
+    csvContent += `${prefCode},${cityCode},${officeSymbol},${officeNumber},${zip1},${zip2},${address},${compName},${repName},${tel1},${tel2},${tel3}\n`;
+    csvContent += "[data]\n";
+
+    let outputCount = 0;
       // 🌟 改定年月（新しい保険料が適用される月）の計算：対象月の「翌月」
       let applyYear = targetYear;
       let applyMonth = targetMonth + 1;
@@ -6192,44 +7424,50 @@ async function downloadGeppenCSV(targetYear: number, targetMonth: number, target
               Number(r.year) < targetYear || (Number(r.year) === targetYear && Number(r.month) <= targetMonth)
           );
 
-          // 直近3ヶ月分のデータが揃っているか確認
-          if (historyFromTarget.length >= 3) {
-              const last3 = historyFromTarget.slice(-3); // 古い順なので：[0]=前3ヶ月, [1]=前2ヶ月, [2]=前1ヶ月（最新）
+// 直近3ヶ月分のデータが揃っているか確認
+if (historyFromTarget.length >= 3) {
+  const last3 = historyFromTarget.slice(-3); // 古い順なので：[0]=前3ヶ月, [1]=前2ヶ月, [2]=前1ヶ月（最新）
 
-              const isDaysValid = last3.every(r => Number(r.days) >= 17);
-              if (isDaysValid) {
-                  const total3Months = last3.reduce((sum, r) => sum + Number(r.totalWage || 0), 0);
-                  const avgWage = Math.floor(total3Months / 3);
-                  const currentBase = Number(emp.baseHealth || 0);
-                  const newInsurance = calculateSocialInsurance(avgWage);
-                  const diff = Math.abs(newInsurance.healthGrade - (emp.healthGrade || 1));
-                  
-                  if (diff >= 2) {
+  // 🌟 先に社保区分を読み込む！
+  const socInsType = emp.socialInsuranceType || localMasterDB[fullName]?.socialInsuranceType || "regular";
+  
+  // 🌟 短時間労働者（11日基準）なら11日、通常従業員なら17日を基準にする！
+  const requiredDays = socInsType === "short_time" ? 11 : 17;
 
-                      const kana = emp.lastNameKana ? `${emp.lastNameKana} ${emp.firstNameKana}`.trim() : (localMasterDB[fullName]?.kana || "");
-                      const myNumber = emp.myNumber || localMasterDB[fullName]?.myNumber || "";
-                      const pensionNum = emp.basicPensionNumber || emp.pensionNumber || localMasterDB[fullName]?.pensionNumber || "";
-                      const birthEGov = getEgoveDate(emp.birthdate || localMasterDB[fullName]?.dob || "");
+  // 一律17日ではなく、それぞれの基準日数で判定する！
+  const isDaysValid = last3.every(r => Number(r.days) >= requiredDays);
+  
+  if (isDaysValid) {
+      const total3Months = last3.reduce((sum, r) => sum + Number(r.totalWage || 0), 0);
+      const avgWage = Math.floor(total3Months / 3);
+      const currentBase = Number(emp.baseHealth || 0);
+      const newInsurance = calculateSocialInsurance(avgWage);
+      const diff = Math.abs(newInsurance.healthGrade - (emp.healthGrade || 1));
+      
+      if (diff >= 2) {
 
-                      // 昇降給区分の判定 (1:昇給, 2:降給)
-                      const upDownFlag = avgWage > currentBase ? "1" : "2";
-                    // 👇＝＝＝ これを追加！ ＝＝＝👇
-                        // 🌟 短時間労働者フラグ（項番45）の判定
-                        // 随時改定はパートフラグがなく、短時間労働者（11日基準）のみ「1」を立てる！
-                        const socInsType = emp.socialInsuranceType || localMasterDB[fullName]?.socialInsuranceType || "regular";
-                        let shortTimeFlag = "";
-                        if (socInsType === "short_time") {
-                            shortTimeFlag = "1";
-                        }
-                        // ☝＝＝＝＝＝＝＝＝＝＝＝＝＝☝
+          const kana = emp.lastNameKana ? `${emp.lastNameKana} ${emp.firstNameKana}`.trim() : (localMasterDB[fullName]?.kana || "");
+          const myNumber = emp.myNumber || localMasterDB[fullName]?.myNumber || "";
+          const pensionNum = emp.basicPensionNumber || emp.pensionNumber || localMasterDB[fullName]?.pensionNumber || "";
+          const rawDob = emp.birthdate || emp.birthDate || localMasterDB[fullName]?.dob || "";
+　　　　　　const birthEGov = getEgoveDate(rawDob);
+
+          // 昇降給区分の判定 (1:昇給, 2:降給)
+          const upDownFlag = avgWage > currentBase ? "1" : "2";
+
+          // 🌟 短時間労働者フラグ（項番45）のセット
+          let shortTimeFlag = "";
+          if (socInsType === "short_time") {
+              shortTimeFlag = "1";
+          }
 
                       // 🌟 仕様書完全準拠：【事業所番号】をあえて抜いた「全49項目」の特殊配列！
                       const row = [
-                          "2221700",                          // 1. 様式コード
-                          companyMaster.prefCode || "",       // 2. 都道府県コード
-                          companyMaster.cityCode || "",       // 3. 郡市区符号
-                          companyMaster.officeSymbol || "",   // 4. 事業所記号
-                          targetEmpId,                        // 5. 整理番号 (★事業所番号はスキップ!)
+                        "2221700",                          // 1. 様式コード
+                        prefCode,                           // 2. 都道府県コード ✨
+                        cityCode,                           // 3. 郡市区符号 ✨
+                        officeSymbol,                       // 4. 事業所記号 ✨
+                        targetEmpId,                       // 5. 整理番号 (★事業所番号はスキップ!)
                           kana,                               // 6. 氏名カナ
                           fullName,                           // 7. 氏名漢字
                           birthEGov.gengo,                    // 8. 生年月日_元号
@@ -6277,9 +7515,22 @@ async function downloadGeppenCSV(targetYear: number, targetMonth: number, target
           return;
       }
 
-      // BOM付きで出力
-      const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-      const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
+// 🌟 【e-Gov完全仕様】文字列をShift-JISに変換する魔法！（月変版）
+      // 1. まず文字列を文字コードの配列に変換
+      const unicodeArray = Encoding.stringToCode(csvContent);
+      
+      // 2. UNICODE から SJIS に変換
+      const sjisArray = Encoding.convert(unicodeArray, {
+          to: 'SJIS',
+          from: 'UNICODE'
+      });
+      
+      // 3. Uint8Array に変換（BOMは絶対に入れない！）
+      const uint8Array = new Uint8Array(sjisArray);
+
+      // 4. Blobを作成し、charsetをShift_JISに指定
+      const blob = new Blob([uint8Array], { type: 'text/csv;charset=Shift_JIS;' });
+      
       const link = document.createElement("a");
       link.setAttribute("href", URL.createObjectURL(blob));
       link.setAttribute("download", "SHFD0006.CSV"); // ガチ仕様ファイル名
@@ -6287,7 +7538,7 @@ async function downloadGeppenCSV(targetYear: number, targetMonth: number, target
       link.click();
       document.body.removeChild(link);
 
-      alert(`✅ ${outputCount}件の月額変更届(e-Gov仕様)を出力しました！`);
+      alert(`✅ ${outputCount}件の月額変更届(e-Gov仕様)を Shift-JIS で出力しました！`);
 
   } catch (error) {
       console.error("CSV出力エラー:", error);
@@ -6310,8 +7561,14 @@ async function downloadShoyoCSV(targetDate: string) {
       alert(`⏳ ${targetDate} 支給分の賞与データを収集し、CSVを生成しています...`);
 
       // 1. Firebaseから会社情報を取得 (e-Gov連携用)
+      // 1. Firebaseから会社情報を取得 (e-Gov連携用)
       let companyMaster: any = {};
-      const docSnap = await getDoc(doc(db, 'settings', 'company'));
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) {
+          alert("会社情報が読み込めません。再読み込みしてください。");
+          return;
+      }
+      const docSnap = await getDoc(doc(db, 'companies', currentCompanyId));
       if (docSnap.exists()) {
           companyMaster = docSnap.data();
       } else {
@@ -6320,14 +7577,17 @@ async function downloadShoyoCSV(targetDate: string) {
       }
 
       // 2. 従業員情報を一括取得（マイナンバーや基礎年金番号のため）
-      const usersSnapshot = await getDocs(collection(db, "users"));
+      const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
+      const usersSnapshot = await getDocs(usersQuery);
       const employees: any[] = [];
       usersSnapshot.forEach((docSnap) => {
           employees.push({ id: docSnap.id, ...docSnap.data() });
       });
 
       // 3. 🌟 真のデータソース！Firestoreから賞与履歴をごっそり取得
-      const bonusSnapshot = await getDocs(collection(db, "bonus_payroll_records"));
+      // 3. 🚨 真のデータソース！Firestoreから賞与履歴をごっそり取得
+      const bonusQuery = query(collection(db, "bonus_payroll_records"), where("companyId", "==", currentCompanyId));
+      const bonusSnapshot = await getDocs(bonusQuery);
       const bonusRecords: any[] = [];
       bonusSnapshot.forEach((doc) => bonusRecords.push(doc.data()));
 
@@ -6357,10 +7617,35 @@ async function downloadShoyoCSV(targetDate: string) {
           return { gengo: "5", date: String(y - 1925).padStart(2, '0') + m + day };
       };
 
+// ==========================================
+      // 🌟 会社情報の最強抽出エンジン（賞与にも搭載！）
+      // ==========================================
+      const prefCode = companyMaster.prefCode || (companyMaster.mainBranch?.prefCode) || "";
+      const cityCode = companyMaster.cityCode || (companyMaster.mainBranch?.cityCode) || "";
+      const officeSymbol = companyMaster.officeSymbol || (companyMaster.mainBranch?.officeSymbol) || "";
+      const officeNumber = companyMaster.officeNumber || (companyMaster.mainBranch?.officeNumber) || "";
+      const address = companyMaster.address || (companyMaster.mainBranch?.address) || "";
+
+      const rawZip = companyMaster.zipCode || (companyMaster.mainBranch?.zipCode) || "";
+      const zipSplit = rawZip.split('-');
+      const zip1 = zipSplit[0] || "";
+      const zip2 = zipSplit[1] || "";
+
+      const rawTel = companyMaster.tel || companyMaster.phone || (companyMaster.mainBranch?.tel) || "";
+      const telSplit = rawTel.split('-');
+      const tel1 = telSplit[0] || "";
+      const tel2 = telSplit[1] || "";
+      const tel3 = telSplit[2] || "";
+
+      const compName = companyMaster.companyName || companyMaster.name || "";
+      const repName = companyMaster.employerName || companyMaster.representativeName || "";
+
+      // ==========================================
       // 🌟 管理レコード([kanri]ブロック)生成
-      let csvContent = `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
+      // ==========================================
+      let csvContent = `${prefCode},${cityCode},${officeSymbol},${csvMeta.mediaSeq},${csvMeta.creationDate},${csvMeta.repCode}\n`;
       csvContent += "[kanri]\n,001\n";
-      csvContent += `${companyMaster.prefCode || ""},${companyMaster.cityCode || ""},${companyMaster.officeSymbol || ""},${companyMaster.officeNumber || ""},${companyMaster.zip1 || ""},${companyMaster.zip2 || ""},${companyMaster.address || ""},${companyMaster.companyName || ""},${companyMaster.employerName || ""},${companyMaster.tel1 || ""},${companyMaster.tel2 || ""},${companyMaster.tel3 || ""}\n`;
+      csvContent += `${prefCode},${cityCode},${officeSymbol},${officeNumber},${zip1},${zip2},${address},${compName},${repName},${tel1},${tel2},${tel3}\n`;
       csvContent += "[data]\n";
 
       let outputCount = 0;
@@ -6377,22 +7662,24 @@ async function downloadShoyoCSV(targetDate: string) {
               const kana = emp.lastNameKana ? `${emp.lastNameKana} ${emp.firstNameKana}`.trim() : "";
               const myNumber = emp.myNumber || "";
               const pensionNum = emp.basicPensionNumber || emp.pensionNumber || "";
-              const birthEGov = getEgoveDate(emp.birthdate || "");
+              
+              // 🔥 生年月日の大文字・小文字ブレ対策（最強の安全網）
+              const rawDob = emp.birthdate || emp.birthDate || "";
+              const birthEGov = getEgoveDate(rawDob);
 
-              // Firestoreのフィールド（bonusWage）から賞与額を取得
               // Firestoreのフィールド（bonusWage）から賞与額を取得
               const exactBonus = Number(record.bonusWage || 0);
               const cashBonus = exactBonus;             // 12番: 1円単位までそのまま
               const materialBonus = 0;                  // 13番: 現物は0固定
               const totalBonus = Math.floor(exactBonus / 1000) * 1000; // 🌟 14番: 1000円未満を切り捨て！
 
-              // 🌟 仕様書完全準拠：【事業所番号】をすっ飛ばした全21項目の特殊配列！
+              // 🌟 仕様書完全準拠：抽出したキレイな変数を使う！
               const row = [
                   "2231700",                          // 1. 様式コード（賞与支払届）
-                  companyMaster.prefCode || "",       // 2. 都道府県コード
-                  companyMaster.cityCode || "",       // 3. 郡市区符号
-                  companyMaster.officeSymbol || "",   // 4. 事業所記号
-                  targetEmpId,                        // 5. 整理番号（★トラップ回避！直ではめる）
+                  prefCode,                           // 2. 都道府県コード ✨
+                  cityCode,                           // 3. 郡市区符号 ✨
+                  officeSymbol,                       // 4. 事業所記号 ✨
+                  targetEmpId,                        // 5. 整理番号
                   kana,                               // 6. 氏名カナ
                   fullName,                           // 7. 氏名漢字
                   birthEGov.gengo,                    // 8. 生年月日_元号
@@ -6401,7 +7688,7 @@ async function downloadShoyoCSV(targetDate: string) {
                   bonusDateEGov.date,                 // 11. 賞与支払年月日_年月日
                   cashBonus.toString(),               // 12. 通貨によるものの額
                   materialBonus.toString(),           // 13. 現物によるものの額
-                  totalBonus.toString(),              // 14. 合計（賞与額）
+                  totalBonus.toString(),              // 14. 合計（賞与額 千円未満切り捨て）
                   myNumber,                           // 15. 個人番号
                   "",                                 // 16. 課所符号
                   pensionNum,                         // 17. 一連番号（基礎年金番号）
@@ -6419,17 +7706,30 @@ async function downloadShoyoCSV(targetDate: string) {
           return;
       }
 
-      // BOM付きで SHFD0006.CSV として出力
-      const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
-      const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
+// 🌟 【e-Gov完全仕様】文字列をShift-JISに変換する魔法！（月変版）
+      // 1. まず文字列を文字コードの配列に変換
+      const unicodeArray = Encoding.stringToCode(csvContent);
+      
+      // 2. UNICODE から SJIS に変換
+      const sjisArray = Encoding.convert(unicodeArray, {
+          to: 'SJIS',
+          from: 'UNICODE'
+      });
+      
+      // 3. Uint8Array に変換（BOMは絶対に入れない！）
+      const uint8Array = new Uint8Array(sjisArray);
+
+      // 4. Blobを作成し、charsetをShift_JISに指定
+      const blob = new Blob([uint8Array], { type: 'text/csv;charset=Shift_JIS;' });
+      
       const link = document.createElement("a");
       link.setAttribute("href", URL.createObjectURL(blob));
-      link.setAttribute("download", "SHFD0006.CSV"); // 🌟ファイル名は役所指定のコレ！
+      link.setAttribute("download", "SHFD0006.CSV"); // ガチ仕様ファイル名
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
 
-      alert(`✅ ${outputCount}件の賞与支払届(e-Gov仕様)を出力しました！`);
+      alert(`✅ ${outputCount}件の賞与届(e-Gov仕様)を Shift-JIS で出力しました！`);
 
   } catch (error) {
       console.error("賞与CSV出力エラー:", error);
@@ -6447,12 +7747,21 @@ async function downloadShoyoCSV(targetDate: string) {
 // 🌟🌟🌟 従業員からの申請を検知してカンバンにタスク化する最強エンジン 🌟🌟🌟
 async function fetchEmployeeRequestsAndCreateTasks() {
   try {
-    // 1. Firestoreから「ステータスが pending (未処理)」の申請だけを探し出す！
-    const q = query(collection(db, "changeRequests"), where("status", "==", "pending"));
+    // 🌟 1. 会社IDを取得して専用キーを作成！
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) return;
+    const taskKey = `hr_tasks_${currentCompanyId}`;
+
+    // 🌟 2. 【超重要】Firestoreの読み込みにも「自分の会社」のフィルターを追加！！！
+    const q = query(
+        collection(db, "changeRequests"), 
+        where("companyId", "==", currentCompanyId), // 👈 これがないと他社の申請が丸見えになります！
+        where("status", "==", "pending")
+    );
     const querySnapshot = await getDocs(q);
 
-    // カンバンの現在のタスク一覧を読み込む
-    const savedTasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
+    // カンバンの現在のタスク一覧を読み込む（🌟 専用キーで！）
+    const savedTasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
     let isNewTaskAdded = false;
 
     for (const docSnap of querySnapshot.docs) { // for...of に変えると非同期処理が安定します
@@ -6481,86 +7790,145 @@ async function fetchEmployeeRequestsAndCreateTasks() {
         isNewTaskAdded = true;
         // 🌟 自動承認済みとしてマーク（重複防止のため、ここでステータスを更新！）
         await updateDoc(doc(db, "changeRequests", reqId), { status: "in_progress" });
-
-        // 💡 オプション: Firestoreのステータスを 'in_progress' (確認中) に変えておく
-        // updateDoc(doc(db, "changeRequests", reqId), { status: "in_progress" });
       }
-    };
+    } // ※不要なセミコロンを除去しました
 
-      // 4. 新しいタスクがあれば保存して画面を更新！
-      if (isNewTaskAdded) {
-        localStorage.setItem('hr_tasks', JSON.stringify(savedTasks));
+    // 4. 新しいタスクがあれば保存して画面を更新！
+    if (isNewTaskAdded) {
+      localStorage.setItem(taskKey, JSON.stringify(savedTasks)); // 🌟 3. 専用キーで保存！
 
-        // 新しいタスクを追加したら、画面をリロードして最新状態をカンバンに表示する！
-        location.reload();
-      } // 🌟🌟🌟 この閉じカッコ（ } ）を追記してください！ 🌟🌟🌟
+      // 新しいタスクを追加したら、画面をリロードして最新状態をカンバンに表示する！
+      location.reload();
+    } 
 
-      } catch (error) {
-      console.error("申請データの取得エラー:", error);
-      }
-      }
+  } catch (error) {
+    console.error("申請データの取得エラー:", error);
+  }
+}
 
-      // 画面が開かれたときにこのエンジンを自動で動かす！
-      document.addEventListener('DOMContentLoaded', () => {
-        // 画面ロードから少しだけ遅らせて実行（他のデータベース読み込みとぶつからないための安全策）
-        setTimeout(fetchEmployeeRequestsAndCreateTasks, 1500); 
-      });
+      // // 画面が開かれたときにこのエンジンを自動で動かす！
+      // document.addEventListener('DOMContentLoaded', () => {
+      //   // 画面ロードから少しだけ遅らせて実行（他のデータベース読み込みとぶつからないための安全策）
+      //   setTimeout(fetchEmployeeRequestsAndCreateTasks, 1500); 
+      // });
 
-// 🌟🌟🌟 ライフイベントタブに「従業員からの申請」を描画する機能 🌟🌟🌟
+// 🌟🌟🌟 ライフイベントタブに「従業員からの申請」を描画する機能（超絶デバッグ版） 🌟🌟🌟
 async function renderLifeEventRequests() {
-  // 💡 HTML側のIDに合わせて取得します（※後でHTML側にもIDを付けます）
   const listContainer = document.getElementById('employee-request-container');
   const badgeCount = document.getElementById('request-badge');
 
   if (!listContainer) return;
 
   try {
- // 4006行目付近：クエリはそのまま
- const q = query(collection(db, "changeRequests"), where("status", "==", "pending"));
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    console.log("🕵️‍♂️ [受信アンテナ起動] 現在の会社ID:", currentCompanyId);
 
- // 🌟 犯人だった await getDocs(q); を消して、onSnapshotで全体を包み込む！
- onSnapshot(q, (querySnapshot) => {
-   
-   if (querySnapshot.empty) {
-     listContainer.innerHTML = `<div style="text-align:center; padding: 30px; color:#888;"><p>現在、従業員からの新たな申請はありません。</p></div>`;
-     if (badgeCount) badgeCount.innerText = "未承認: 0件";
-     return;
-   }
+    if (!currentCompanyId) {
+        if (listContainer) listContainer.innerHTML = '<div style="color:red; padding:10px;">会社情報が読み込めません。</div>';
+        return;
+    }
 
-   let html = '';
-   let count = 0;
-   querySnapshot.forEach((docSnap) => {
-     const data = docSnap.data();
-     count++;
-      
-      // 申請内容のカード用HTMLを作成
-      html += `
-        <div class="request-card" style="border: 1px solid #d1d5db; padding: 15px; margin-bottom: 15px; border-radius: 8px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-          <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px; margin-bottom: 8px;">
-            <strong style="color: #0056b3; font-size: 15px;">【${data.type}】</strong>
-            <span style="font-size: 12px; color: #6b7280;">申請日: ${data.changeDate || '不明'}</span>
-          </div>
-           <div style="font-size: 14px; color: #374151; line-height: 1.6;">
-            👤 <b>対象者ID:</b> ${data.employeeId} <br>
-            ${data.newLastName || data.newFirstName ? `✏️ <b>新氏名:</b> ${data.newLastName || ''} ${data.newFirstName || ''}<br>` : ''}
-            
-            ${data.newAddress ? `🏠 <b>新住所:</b> 〒${data.newZip || '---'} ${data.newAddress}<br>` : ''}
-            
-            ${data.newPass || data.newRoute ? `🚃 <b>通勤経路:</b> ${data.newRoute || '未入力'} <br>
-            💰 <b>新・定期代:</b> ${data.newPass ? data.newPass.toLocaleString() : '0'} 円<br>` : ''}
-          </div>
-          <div style="margin-top: 15px; text-align: right;">
-            <button onclick="approveRequest('${docSnap.id}')" class="btn-approve-request" style="="background: #28a745; color: white; border: none; padding: 6px 15px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s;">内容を確認して承認</button>          
-          </div>
-        </div>
-      `;
-    });
+    const q = query(
+        collection(db, "changeRequests"), 
+        where("companyId", "==", currentCompanyId),
+        where("status", "==", "pending")
+    );
 
-    // 🌟 forEachループが終わったら、組み立てたHTMLを画面にドーンと入れてバッジを更新！
-    listContainer.innerHTML = html;
-    if (badgeCount) badgeCount.innerText = `未承認: ${count}件`;
+    // 🌟 監視スタート！
+    onSnapshot(q, (querySnapshot) => {
+       console.log(`📡 [Firestore着信] 条件に合う未承認データが ${querySnapshot.size} 件見つかりました！`);
 
-  }); // 🌟 onSnapshotのカッコをここで閉じる！
+       if (querySnapshot.empty) {
+         listContainer.innerHTML = `<div style="text-align:center; padding: 30px; color:#888;"><p>現在、従業員からの新たな申請はありません。</p></div>`;
+         if (badgeCount) badgeCount.innerText = "未承認: 0件";
+         return;
+       }
+
+       let html = '';
+       let count = 0;
+       
+       querySnapshot.forEach((docSnap) => {
+         const data = docSnap.data();
+         count++;
+         
+         // 🔥 ここでデータを丸裸にしてコンソールに表示！
+         console.log(`📦 [データ${count}件目] ID: ${docSnap.id}`);
+         console.log(`┣ 種類: ${data.type}`);
+         console.log(`┣ 氏名: ${data.empName}`);
+         console.log(`┗ 中身:`, data);
+
+         let detailHtml = '';
+         
+         if (data.type === "住所・氏名変更") {
+             detailHtml = `
+                ${data.newLastName || data.newFirstName ? `✏️ <b>新氏名:</b> ${data.newLastName || ''} ${data.newFirstName || ''}<br>` : ''}
+                ${data.newAddress ? `🏠 <b>新住所:</b> 〒${data.newZip || '---'} ${data.newAddress}<br>` : ''}
+                ${data.newPass || data.newRoute ? `🚃 <b>通勤経路:</b> ${data.newRoute || '未入力'} <br>
+                💰 <b>新・定期代:</b> ${data.newPass ? data.newPass.toLocaleString() : '0'} 円<br>` : ''}
+             `;
+         } 
+         else if (data.type === "ライフイベント") {
+             detailHtml = `
+                📌 <b>イベント:</b> ${data.eventTitle || data.eventType}<br>
+                📅 <b>発生日:</b> ${data.eventDate || data.changeDate || '不明'}<br>
+             `;
+             if (data.dependent?.lastNameKanji) {
+                 detailHtml += `👪 <b>対象家族:</b> ${data.dependent.lastNameKanji} ${data.dependent.firstNameKanji} (${data.dependent.relation || '続柄不明'})<br>`;
+             }
+             if (data.eventType === 'remove_family') {
+                 detailHtml += `👋 <b>喪失対象:</b> ${data.targetFamilyName} <br>
+                                📄 <b>理由:</b> ${data.removeReason} <br>
+                                💳 <b>保険証回収:</b> ${data.cardReturnStatus || '不明'}<br>`;
+             }
+             if (data.attachedFiles && data.attachedFiles.length > 0) {
+                 detailHtml += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">📎 <b>添付書類:</b><br>`;
+                 data.attachedFiles.forEach((file: any) => {
+                     detailHtml += `<a href="${file.fileUrl}" target="_blank" style="color: #0056b3; font-size: 12px; text-decoration: underline; margin-right: 10px;">📄 ${file.docName}</a>`;
+                 });
+                 detailHtml += `</div>`;
+             }
+         }
+         else if (data.type === "保険証再発行") {
+             detailHtml = `
+                💳 <b>理由:</b> ${data.dependent?.reason || '不明'}<br>
+                📅 <b>発生日:</b> ${data.eventDate || '不明'}<br>
+                🚨 <b>警察届出:</b> ${data.dependent?.policeReport || '不要'}<br>
+                📝 <b>メモ:</b> ${data.dependent?.memo || 'なし'}<br>
+             `;
+         }
+         else if (data.type === "退職") {
+             detailHtml = `
+                🚪 <b>退職日:</b> ${data.eventDate || '不明'}<br>
+                💳 <b>保険証返却:</b> ${data.dependent?.insuranceReturn || '不明'}<br>
+                📄 <b>離職票:</b> ${data.dependent?.unemploymentSlip || '未選択'}<br>
+             `;
+         }
+
+         html += `
+            <div class="request-card" style="border: 1px solid #d1d5db; padding: 15px; margin-bottom: 15px; border-radius: 8px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px; margin-bottom: 8px;">
+                <strong style="color: #0056b3; font-size: 15px;">【${data.type || data.eventTitle || '申請'}】</strong>
+                <span style="font-size: 12px; color: #6b7280;">申請日: ${data.createdAt ? new Date(data.createdAt.seconds * 1000).toLocaleDateString() : '最近'}</span>
+              </div>
+              <div style="font-size: 14px; color: #374151; line-height: 1.6;">
+                👤 <b>対象者:</b> ${data.empName || '氏名不明'} (ID: ${data.employeeId}) <br>
+                <div style="margin-top: 8px; background: #f8f9fa; padding: 10px; border-radius: 4px; border-left: 3px solid #ffc107;">
+                    ${detailHtml}
+                </div>
+              </div>
+              <div style="margin-top: 15px; text-align: right;">
+                <button onclick="approveRequest('${docSnap.id}')" class="btn-approve-request" style="background: #28a745; color: white; border: none; padding: 6px 15px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s;">内容を確認して承認</button>          
+              </div>
+            </div>
+         `;
+       });
+
+       listContainer.innerHTML = html;
+       if (badgeCount) badgeCount.innerText = `未承認: ${count}件`;
+
+    }, (error) => {
+       console.error("🚨 [Firestoreエラー] onSnapshotでエラー発生！", error);
+    }); 
   } catch (error) {
     console.error("申請データの描画エラー:", error);
   }
@@ -6570,52 +7938,53 @@ async function renderLifeEventRequests() {
 // Firestore関連の関数（getDoc, doc, updateDoc など）が一番上でimportされているか確認してください！
 
 (window as any).approveRequest = async (requestId: string) => {
-  if (!confirm("この申請を承認し、社員マスタと給与システム（通勤手当）を自動更新しますか？")) return;
-
   try {
-    // 1. 申請データ（changeRequests）を取得
+    // 🌟 1. 会社IDを取得して専用キーを作成！
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) {
+        alert("会社情報が読み込めません。");
+        return;
+    }
+    const taskKey = `hr_tasks_${currentCompanyId}`;
+
+    // 🌟 復元：消し飛んでいた「申請データの取得」処理！！！
     const requestRef = doc(db, "changeRequests", requestId);
     const requestSnap = await getDoc(requestRef);
-
     if (!requestSnap.exists()) {
-      alert("申請データが見つかりません。");
-      return;
+        alert("申請データが見つかりません。");
+        return;
     }
-
     const reqData = requestSnap.data();
     const empId = reqData.employeeId;
 
-    // 2. 🌟魔法その1：社員マスタ（employees）を自動更新！（給与システムへ連動）
-    // ※竹高さんの環境に合わせて、employeesコレクションから該当従業員を探します
- // 🌟 修正1：検索の鍵穴を「employeeId」にする！
- const q = query(collection(db, "users"), where("employeeId", "==", empId));
- const empSnapshot = await getDocs(q);
+    // 🌟 2. 従業員を検索する時も「自分の会社」のフィルターを追加
+    const q = query(
+        collection(db, "users"), 
+        where("companyId", "==", currentCompanyId),
+        where("employeeId", "==", empId)
+    );
+    const empSnapshot = await getDocs(q);
 
- if (!empSnapshot.empty) {
-   const empDoc = empSnapshot.docs[0];
-   const updateData: any = {};
+    if (!empSnapshot.empty) {
+      const empDoc = empSnapshot.docs[0];
+      const updateData: any = {};
 
-   // 申請されたデータがあるものだけマスタを上書きする！
-   if (reqData.newZip) updateData.zipCode = reqData.newZip; // ※郵便番号
-   
-   // 🌟 修正2：住所の箱の名前を「currentAddress」に合わせる！
-   if (reqData.newAddress) updateData.currentAddress = reqData.newAddress;
-   
-   if (reqData.newPass) updateData['allowances.commute'] = reqData.newPass; // 定期代（給与反映！）
-   if (reqData.newLastName) updateData.lastName = reqData.newLastName;
-   if (reqData.newFirstName) updateData.firstName = reqData.newFirstName;
+      if (reqData.newZip) updateData.zipCode = reqData.newZip;
+      if (reqData.newAddress) updateData.currentAddress = reqData.newAddress;
+      if (reqData.newPass) updateData['allowances.commute'] = reqData.newPass;
+      if (reqData.newLastName) updateData.lastName = reqData.newLastName;
+      if (reqData.newFirstName) updateData.firstName = reqData.newFirstName;
 
-   // 🌟 （確認済）users コレクションを更新する！
-   await updateDoc(doc(db, "users", empDoc!.id), updateData);
- } else {
-   console.warn(`社員ID: ${empId} のマスタが見つかりませんでした。タスク生成のみ行います。`);
- }
+      await updateDoc(doc(db, "users", empDoc!.id), updateData);
+    } else {
+      console.warn(`社員ID: ${empId} のマスタが見つかりませんでした。タスク生成のみ行います。`);
+    }
 
-    // 3. 🌟魔法その2：申請のステータスを「承認済み(approved)」に変更して一覧から消す
+    // 3. 申請のステータスを「承認済み(approved)」に変更して一覧から消す
     await updateDoc(requestRef, { status: "approved" });
 
-    // 4. 🌟魔法その3：カンバンに「e-Gov提出用タスク」を自動生成！
-    const savedTasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
+    // 4. カンバンに「e-Gov提出用タスク」を自動生成！
+    const savedTasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
     const newTaskTitle = `【重要】${reqData.newLastName || ''} ${reqData.newFirstName || ''}様（ID:${empId}）の ${reqData.type} 届作成`;
     
     const newTask = {
@@ -6623,20 +7992,18 @@ async function renderLifeEventRequests() {
       title: newTaskTitle,
       empName: empId, 
       agency: '年金事務所',
-      status: 'todo', // カンバンの未着手エリアへ
-      deadline: new Date(new Date().getTime() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 期限は5日後
+      status: 'todo',
+      deadline: new Date(new Date().getTime() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       source: '自動検知(承認済)',
       createdAt: new Date().toISOString(),
       memo: `【承認済】従業員からの申請に基づき、社員マスタ（住所・通勤手当等）は自動更新されました。\ne-GovからCSVを出力して提出してください。\n（※マイナンバー連携済みの場合は提出不要です。社内用として完了にしてください）`,
-      targetId: requestId // 将来的にCSVを出す時のための鍵
+      targetId: requestId 
     };
 
     savedTasks.push(newTask);
-    localStorage.setItem('hr_tasks', JSON.stringify(savedTasks));
+    localStorage.setItem(taskKey, JSON.stringify(savedTasks)); 
 
     alert("🌟 承認完了！\n社員マスタと通勤手当が自動更新され、カンバンにタスクが生成されました！");
-    
-    // 画面をリロードして、承認済みのカードを一覧から消す
     location.reload();
 
   } catch (error) {
@@ -6672,30 +8039,65 @@ function downloadCSV(content: string, fileName: string) {
 // ==========================================
 
 // 🌟 1. 保存ボタンの処理（イベントデリゲーション方式：後からボタンが作られても絶対反応する神設定！）
+// ==================================================
+  // 🏢 会社設定（給与計算連動マスタ）の保存と読み込み（マルチテナント完全版）
+  // ==================================================
+
+  // 1. 画面を開いたときに、DBから自分の会社の設定値を読み込んで表示する
+  setTimeout(async () => {
+    try {
+        const cid = localStorage.getItem('current_company_id');
+        if (!cid) return; // 会社IDがなければ無視
+
+        // 正しい会社のドキュメントを読みに行く
+        const snap = await getDoc(doc(db, 'companies', cid));
+        if (snap.exists()) {
+            const data = snap.data();
+            const cutoffSelect = document.getElementById('company-cutoff-day') as HTMLSelectElement;
+            const payMonthSelect = document.getElementById('company-payment-month') as HTMLSelectElement;
+            const payDaySelect = document.getElementById('company-payment-day') as HTMLSelectElement;
+
+            // DBにデータがあれば、プルダウンの選択肢を自動で切り替える
+            if (cutoffSelect && data.cutoffDay) cutoffSelect.value = data.cutoffDay;
+            if (payMonthSelect && data.paymentMonth) payMonthSelect.value = data.paymentMonth;
+            if (payDaySelect && data.paymentDay) payDaySelect.value = data.paymentDay;
+        }
+    } catch (error) {
+        console.error("設定の読み込みエラー:", error);
+    }
+}, 500); // 画面の描画を少し待ってから読み込む
+
+// 2. 保存ボタンの処理
 document.addEventListener('click', async (e) => {
-  const target = e.target as HTMLElement;
-  
-  // もしクリックされた要素のIDが「btn-save-company-pay-rules」だったら実行！
-  if (target && target.id === 'btn-save-company-pay-rules') {
-      const cutoffSelect = document.getElementById('company-cutoff-day') as HTMLSelectElement;
-      const payMonthSelect = document.getElementById('company-payment-month') as HTMLSelectElement;
-      const payDaySelect = document.getElementById('company-payment-day') as HTMLSelectElement;
+    const target = e.target as HTMLElement;
 
-      console.log("🔘 保存ボタンが押されました！Firestoreへ通信開始...");
-      try {
-          await setDoc(doc(db, 'settings', 'company'), {
-              cutoffDay: cutoffSelect?.value,
-              paymentMonth: payMonthSelect?.value,
-              paymentDay: payDaySelect?.value
-          }, { merge: true });
+    // もしクリックされたのが「給与ルールを保存する」ボタンだったら
+    if (target && target.id === 'btn-save-company-pay-rules') {
+        const cid = localStorage.getItem('current_company_id');
+        if (!cid) {
+            alert("エラー：会社IDが取得できませんでした。");
+            return;
+        }
 
-          alert("🏢 給与計算ルールを保存しました！\n（給与タブの労働期間表示にも即座に反映されます）");
-          
-      } catch (error) {
-          console.error("会社設定の保存に失敗:", error);
-          alert("保存エラーが発生しました。");
-      }
-  }
+        const cutoffVal = (document.getElementById('company-cutoff-day') as HTMLSelectElement)?.value;
+        const payMonthVal = (document.getElementById('company-payment-month') as HTMLSelectElement)?.value;
+        const payDayVal = (document.getElementById('company-payment-day') as HTMLSelectElement)?.value;
+
+        try {
+            // 正しい会社（companies内のcid）に保存する！！
+            await updateDoc(doc(db, 'companies', cid), {
+                cutoffDay: cutoffVal,
+                paymentMonth: payMonthVal,
+                paymentDay: payDayVal,
+                updatedAt: serverTimestamp()
+            });
+
+            alert(`✅ 給与計算ルールを保存しました！\n締め日: ${cutoffVal}\n支払月: ${payMonthVal}\n\n（給与タブの労働期間表示にも反映されます）`);
+        } catch (error) {
+            console.error("会社設定の保存に失敗:", error);
+            alert("保存エラーが発生しました。");
+        }
+    }
 });
 
 // 🌟 2. 画面を開いたときに設定値を表示する処理
@@ -6829,13 +8231,19 @@ if (targetSelect && targetSelect.options.length === 0) {
       const optionText = targetSelect.options[targetSelect.selectedIndex]?.text || "";
       const revisionYear = parseInt(optionText.match(/\d{4}/)?.[0] || String(new Date().getFullYear()));
 
-      const usersSnapshot = await getDocs(collection(db, "users"));
-      const employees: any[] = [];
-      usersSnapshot.forEach((doc) => employees.push({ id: doc.id, ...doc.data() }));
+      // 🌟 会社IDを取得してフィルターをかける
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) return;
 
-      const payrollsSnapshot = await getDocs(collection(db, "monthly_payroll_records"));
+      const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
+      const usersSnapshot = await getDocs(usersQuery);
+      const employees: any[] = [];
+      usersSnapshot.forEach((doc) => employees.push({ id: doc.id, ...doc.data() as any }));
+
+      const payrollQuery = query(collection(db, "monthly_payroll_records"), where("companyId", "==", currentCompanyId));
+      const payrollSnapshot = await getDocs(payrollQuery);
       const payrollRecords: any[] = [];
-      payrollsSnapshot.forEach((doc) => payrollRecords.push(doc.data()));
+      payrollSnapshot.forEach((doc) => payrollRecords.push(doc.data()));
 
       // 🔥 ここで共通関数を呼び出すだけ！
       const targets = getZuijiTargets(revisionYear, revisionMonth, employees, payrollRecords);

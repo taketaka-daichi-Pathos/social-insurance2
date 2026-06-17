@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>初期設定 | 労務管理システム L-FLAG</title>
+  <style>
+    /* オンボーディング用のシンプルな中央寄せスタイル */
+    body {
+      background-color: #f4f6f8;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      font-family: sans-serif;
+    }
+    .setup-card {
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+    .setup-card h1 {
+      font-size: 24px;
+      margin-bottom: 10px;
+      color: #333;
+    }
+    .setup-card p {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 30px;
+      line-height: 1.5;
+    }
+    .input-group {
+      text-align: left;
+      margin-bottom: 25px;
+    }
+    .input-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #444;
+    }
+    .input-group input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    .input-group input:focus {
+      outline: none;
+      border-color: #0056b3;
+      box-shadow: 0 0 5px rgba(0, 86, 179, 0.3);
+    }
+    .btn-submit {
+      width: 100%;
+      padding: 14px;
+      background-color: #0056b3;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    .btn-submit:hover {
+      background-color: #004494;
+    }
+    .btn-submit:disabled {
+      background-color: #999;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="setup-card">
+    <h1>ようこそ！🎉</h1>
+    <p>まずは、あなたの会社名を登録して<br>専用のワークスペースを完成させましょう。</p>
+
+    <div class="input-group">
+      <label for="company-name">会社名（※後からでも変更可能です）</label>
+      <input type="text" id="company-name" placeholder="例：株式会社L-FLAG" required>
+    </div>
+
+    <button id="btn-setup-complete" class="btn-submit">社会保険管理アプリをはじめる</button>
+  </div>
+
+  <script type="module" src="/src/company-setup.ts"></script>
+</body>
+</html>

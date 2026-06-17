@@ -164,12 +164,12 @@
             
             <div style="margin-bottom: 15px;">
               <label style="display: block; font-weight: bold; font-size: 13px; margin-bottom: 5px; color: #333;">基礎年金番号（10桁の数字）</label>
-              <input type="text" id="input-emp-pension" placeholder="例: 1234567890" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
+              <input type="text" id="input-emp-pension" class="strict-number" inputmode="numeric" placeholder="例: 1234567890" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
             </div>
 
             <div style="margin-bottom: 25px;">
               <label style="display: block; font-weight: bold; font-size: 13px; margin-bottom: 5px; color: #333;">マイナンバー（個人番号：12桁の数字）</label>
-              <input type="text" id="input-emp-mynumber" placeholder="例: 123412341234" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
+              <input type="text" id="input-emp-mynumber" class="strict-number" inputmode="numeric" placeholder="例: 123412341234" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
             </div>
 
             <div style="margin-bottom: 25px; border: 1px solid #e0e0e0; padding: 15px; border-radius: 8px; background: #f8f9fa;">
@@ -188,7 +188,7 @@
                 </div>
                 <div style="flex: 1;">
                   <label style="display: block; font-weight: bold; font-size: 13px; margin-bottom: 5px; color: #333;">健康保険 番号</label>
-                  <input type="text" id="input-emp-health-number" placeholder="例: 56789" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
+                  <input type="text" id="input-emp-health-number" class="strict-number" inputmode="numeric" placeholder="例: 56789" style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px;">
                   <p style="margin: 5px 0 0; font-size: 11px; color: #666;">※数字のみ</p>
                 </div>
               </div>
@@ -544,11 +544,11 @@
           <label style="font-weight: bold; color: #d84315; font-size: 14px;">✅ 会社に手続きを依頼するサポート（ご希望の項目にチェック）</label>
           <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; color: #333;">
             <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="allowance" checked> 💰 産休中のお給料の代わり（出産手当金）を申請する</label>
-            <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="exemption" checked> 🆓 育休中の社会保険料を「タダ」にする手続きを会社に任せる</label>
+            <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="exemption" checked> 🆓 育休産休中の社会保険料を「タダ」にする手続きを会社に任せる</label>
             <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="hellowork" checked> 🏢 ハローワークからの育休手当（育児休業給付金）を申請する</label>
             <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="monthly_change" checked> 🛡️ 復帰後、時短勤務で給料が下がる場合、保険料を安くして手取りを守る特例を申請する</label>
             <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="pension_special" checked> 👴 上記で保険料を安くしても、将来の年金が減らないようにする特例を申請する</label>
-            <label style="cursor: pointer;"><input type="checkbox" class="birth-support-check" value="sankyu_exemption" checked> 🍼 産休中の社会保険料を「タダ」にする手続きを会社に任せる</label>
+
           </div>
           <p style="margin-top: 10px; font-size: 11px; color: #666;">※チェックを入れると、担当の労務に必要な手続きタスクが自動で通知されます。</p>
         </div>

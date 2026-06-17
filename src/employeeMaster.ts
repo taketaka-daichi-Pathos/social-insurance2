@@ -1,4 +1,4 @@
-import { collection, getDocs, doc, updateDoc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, setDoc, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from './config/firebase.js'; // パスは環境に合わせてください
 
 export async function initEmployeeMasterUI() {
@@ -23,19 +23,38 @@ export async function initEmployeeMasterUI() {
     });
   }
 
+  // 🌟 追加①：関数の外（ファイルの上の方など）で、カメラの電源スイッチを用意
+let unsubscribeEmployees: any = null;
 // Firebaseから社員を取得してリスト化するロジック（現役・退職を動的に切り替え）
-const loadEmployees = async () => {
-  try {
-    const usersSnap = await getDocs(collection(db, 'users'));
-    tableBody.innerHTML = ''; 
+// Firebaseから社員を取得してリスト化するロジック
+const loadEmployees = () => {
+  // 🌟 追加②：自分の「会社ID」を取得する！
+  const currentCompanyId = localStorage.getItem('current_company_id');
+  if (!currentCompanyId) {
+    console.error("会社IDが見つかりません");
+    return;
+  }
 
-    // 🌟 ステップ1：Firestoreのデータを一旦「配列」にすべて詰め込む！
-    let allEmployees: any[] = [];
-    usersSnap.forEach((uSnap) => {
-      const emp = uSnap.data();
-      emp.docId = uSnap.id; // ドキュメントIDもデータの中に入れておく（後で使うため）
-      allEmployees.push(emp);
-    });
+  // 🌟 追加③：魔法のフィルター！「自分の会社の従業員」だけを狙い撃ち！
+  const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
+
+  try {
+    // 🌟 追加④：すでに監視カメラが動いていたら、一度停止（分身防止！）
+    if (unsubscribeEmployees) {
+      unsubscribeEmployees();
+    }
+
+    // 🌟 変更⑤：`collection(db, "users")` ではなく `usersQuery` を監視する！
+    unsubscribeEmployees = onSnapshot(usersQuery, (usersSnap) => {
+      tableBody.innerHTML = ''; // テーブル初期化
+
+      // 🛑 ステップ：Firestoreのデータを一旦「配列」にすべて詰め込む！
+      let allEmployees: any[] = [];
+      usersSnap.forEach((uSnap) => {
+        const emp = uSnap.data();
+        emp.docId = uSnap.id; // ドキュメントIDもデータの中に入れておく
+        allEmployees.push(emp);
+      });
 
 
     // 🌟 追加：現在のプルダウンの値を取得
@@ -87,7 +106,7 @@ const loadEmployees = async () => {
       // ⬇️ 以下、既存の「const td = document.createElement('td');...」の処理が続きます！
         // 🌟 追加：退職済タブの場合は「取消ボタン」の代わりに「退職ラベル」を表示
         const actionHtml = currentFilter === 'active' 
-          ? `<button class="btn-cancel-emp" data-id="${emp.docId}" data-email="${emp.email || emp.docId}" style="padding: 4px 8px; background: #fff; color: #dc3545; border: 1px solid #dc3545; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: bold; transition: 0.2s;">❌ 取消</button>`
+          ? `<button class="btn-cancel-emp" data-id="${emp.docId}" data-email="${emp.email || emp.docId}" style="padding: 4px 8px; background: #fff; color: #dc3545; border: 1px solid #dc3545; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: bold; transition: 0.2s;">❌ 雇用形態変更</button>`
           : `<span style="background: #e0e0e0; color: #555; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">退職済</span>`;
 
         tr.innerHTML = `
@@ -111,13 +130,87 @@ const loadEmployees = async () => {
 
           const detailContent = document.getElementById('employee-detail-content');
           if (modal && detailContent) {
-              // ... （既存のモーダル詳細表示用HTML。変更なしなのでそのまま記載します）
-              detailContent.innerHTML = `
+
+
+　　　　　　　// =========================================================
+            // 🌟🌟🌟 追加：給与形態に応じた「基本給」の動的HTML生成 🌟🌟🌟
+            // =========================================================
+            const salaryType = emp.salaryType || '月給'; // '月給', '日給', '時給'
+            const baseAmt = Number(emp.baseSalary || emp.baseHealth || 0); // 単価
+            const weeklyHours = Number(emp.workingHours?.weekly || 0);     // 週の労働時間
+
+            let baseSalaryHtml = '';
+            if (salaryType === '時給') {
+              // 時給の場合は、以前作っていただいた「月額目安」の計算式を適用！
+              const estimatedMonthly = Math.round(baseAmt * weeklyHours * 52 / 12);
+              baseSalaryHtml = `<p style="margin: 6px 0; font-size: 14px;"><strong>基本給 (時給):</strong> ${baseAmt.toLocaleString()} 円 <span style="color:#0056b3; font-size: 12px; font-weight: bold;">(≒ 月額目安: ${estimatedMonthly.toLocaleString()} 円)</span></p>`;
+            } else if (salaryType === '日給') {
+              baseSalaryHtml = `<p style="margin: 6px 0; font-size: 14px;"><strong>基本給 (日給):</strong> ${baseAmt.toLocaleString()} 円 <span style="color:#666; font-size: 12px;">(※出勤日数に応じて支給)</span></p>`;
+            } else {
+              baseSalaryHtml = `<p style="margin: 6px 0; font-size: 14px;"><strong>基本給 (月給):</strong> ${baseAmt.toLocaleString()} 円</p>`;
+            }
+            // =========================================================
+
+
+// =========================================================
+            // 🌟 追加①：社会保険料「免除」バッジの生成
+            // =========================================================
+            const exemptBadgeHtml = emp.isSocialInsuranceExempt 
+              ? `<span style="background: #dc3545; color: white; font-size: 12px; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle;">🆓 社会保険料免除中</span>` 
+              : '';
+
+            // =========================================================
+            // 🌟 追加②：扶養家族のループ描画ロジック（複数人対応！）
+            // =========================================================
+            let dependentsHtml = '';
+            // 新仕様（配列）があればそれを使い、なければ空配列
+            const depList = Array.isArray(emp.dependents) ? emp.dependents : [];
+            
+            // 💡 後方互換性：昔の単一データ(emp.dependent)しか持っていない社員への配慮
+            if (depList.length === 0 && emp.hasDependent && emp.dependent) {
+                depList.push(emp.dependent);
+            }
+
+            if (depList.length > 0) {
+              // 家族の人数分だけHTMLのブロックをループして作成し、最後に繋げる
+              dependentsHtml = depList.map((dep: any, index: number) => {
+                
+                // 🔴 喪失判定とスタイルの設定
+                const isRemoved = dep.isRemoved === true;
+                const badgeHtml = isRemoved ? `<span style="background: #dc3545; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 8px; font-weight: bold;">喪失済</span>` : '';
+                const rowStyle = isRemoved ? 'opacity: 0.65; background-color: #f8f9fa; border-left: 4px solid #dc3545; padding-left: 10px;' : '';
+                const borderStyle = index !== depList.length - 1 ? 'border-bottom: 1px dashed #ccc; padding-bottom: 12px; margin-bottom: 12px;' : '';
+                const removedDateHtml = isRemoved && dep.removedDate ? `<p style="margin: 6px 0; font-size: 12px; color: #dc3545;"><strong>システム喪失日:</strong> ${new Date(dep.removedDate).toLocaleDateString()}</p>` : '';
+
+                return `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; transition: all 0.3s; ${borderStyle} ${rowStyle}">
+                  <div>
+                    <p style="margin: 6px 0; font-size: 14px;"><strong>氏名:</strong> ${dep.lastNameKanji || ''} ${dep.firstNameKanji || ''} <span style="color:#666; font-size: 12px;">(${dep.lastNameKana || ''} ${dep.firstNameKana || ''})</span> ${badgeHtml}</p>
+                    <p style="margin: 6px 0; font-size: 14px;"><strong>続柄:</strong> ${dep.relation || dep.relationship || '未設定'}</p>
+                    <p style="margin: 6px 0; font-size: 14px;"><strong>生年月日:</strong> ${dep.birthDate || dep.birthdate || '未設定'}</p>
+                  </div>
+                  <div>
+                    <p style="margin: 6px 0; font-size: 14px;"><strong>同居 / 別居:</strong> ${dep.livingStatus || '未設定'}</p>
+                    <p style="margin: 6px 0; font-size: 14px;"><strong>年間収入見込:</strong> ${dep.income || dep.estimatedIncome ? Number(dep.income || dep.estimatedIncome).toLocaleString() + ' 円' : '0 円'}</p>
+                    ${dep.hasDisability ? `<p style="margin: 6px 0; font-size: 14px; color: #dc3545;"><strong>障害の有無:</strong> あり</p>` : ''}
+                    ${removedDateHtml}
+                  </div>
+                </div>
+              `}).join('');
+          } else {
+              dependentsHtml = `<p style="margin: 6px 0; font-size: 14px; color: #666;">扶養する家族はいません（または未登録）</p>`;
+          }
+
+
+  // =========================================================
+            // 🌟 最終描画：組み立てたHTMLを流し込む！
+            // =========================================================
+            detailContent.innerHTML = `
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                   <div style="background: white; padding: 16px; border-radius: 8px; border: 1px solid #ddd; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                     <h4 style="color: #0056b3; margin-top: 0; border-bottom: 2px solid #e3f2fd; padding-bottom: 8px;">👤 本人基本情報</h4>
                     <p style="margin: 6px 0; font-size: 14px;"><strong>社員番号:</strong> ${emp.employeeId || '未設定'}</p>
-                    <p style="margin: 6px 0; font-size: 14px;"><strong>氏名:</strong> ${emp.lastNameKanji || ''} ${emp.firstNameKanji || ''} <span style="color:#666; font-size: 12px;">(${emp.lastNameKana || ''} ${emp.firstNameKana || ''})</span></p>
+                    <p style="margin: 6px 0; font-size: 14px;"><strong>氏名:</strong> ${emp.lastNameKanji || ''} ${emp.firstNameKanji || ''} <span style="color:#666; font-size: 12px;">(${emp.lastNameKana || ''} ${emp.firstNameKana || ''})</span>${exemptBadgeHtml}</p>
                     <p style="margin: 6px 0; font-size: 14px;"><strong>生年月日:</strong> ${emp.birthdate || '未設定'} / <strong>性別:</strong> ${emp.gender === 'male' ? '男性' : emp.gender === 'female' ? '女性' : '未設定'}</p>
                     <p style="margin: 6px 0; font-size: 14px;"><strong>現住所:</strong> ${emp.currentAddress || '未設定'}</p>
                     <p style="margin: 6px 0; font-size: 14px;"><strong>住民票:</strong> ${emp.registeredAddress || '未設定'}</p>
@@ -128,8 +221,7 @@ const loadEmployees = async () => {
                     <h4 style="color: #28a745; margin-top: 0; border-bottom: 2px solid #e8f5e9; padding-bottom: 8px;">🏢 契約・給与情報</h4>
                     <p style="margin: 6px 0; font-size: 14px;"><strong>雇用形態:</strong> ${emp.contractInfo?.empType || '正社員'}</p>
                     <p style="margin: 6px 0; font-size: 14px;"><strong>入社日:</strong> ${emp.contractInfo?.startDate || '未定'}</p>
-                    <p style="margin: 6px 0; font-size: 14px;"><strong>基本給:</strong> ${Number(emp.baseHealth || 0).toLocaleString()} 円</p>
-                    <p style="margin: 6px 0; font-size: 14px; font-weight: bold; color: #d32f2f;"><strong>手当合計:</strong> ${totalAllowances.toLocaleString()} 円</p>
+                    ${baseSalaryHtml} <p style="margin: 6px 0; font-size: 14px; font-weight: bold; color: #d32f2f;"><strong>手当合計:</strong> ${totalAllowances.toLocaleString()} 円</p>
                     <ul style="margin: 4px 0 12px; padding-left: 20px; font-size: 12px; color: #555;">
                       <li>役職手当: ${role.toLocaleString()} 円</li>
                       <li>家族手当: ${family.toLocaleString()} 円</li>
@@ -157,23 +249,7 @@ const loadEmployees = async () => {
   
                   <div style="background: white; padding: 16px; border-radius: 8px; border: 1px solid #ddd; grid-column: span 2; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                     <h4 style="color: #fd7e14; margin-top: 0; border-bottom: 2px solid #fff3cd; padding-bottom: 8px;">👨‍👩‍👧 扶養家族情報</h4>
-                    ${emp.hasDependent && emp.dependent ? `
-                      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                        <div>
-                          <p style="margin: 6px 0; font-size: 14px;"><strong>氏名:</strong> ${emp.dependent.lastNameKanji || ''} ${emp.dependent.firstNameKanji || ''} <span style="color:#666; font-size: 12px;">(${emp.dependent.lastNameKana || ''} ${emp.dependent.firstNameKana || ''})</span></p>
-                          <p style="margin: 6px 0; font-size: 14px;"><strong>続柄:</strong> ${emp.dependent.relationship || '未設定'}</p>
-                          <p style="margin: 6px 0; font-size: 14px;"><strong>生年月日:</strong> ${emp.dependent.birthdate || '未設定'}</p>
-                        </div>
-                        <div>
-                          <p style="margin: 6px 0; font-size: 14px;"><strong>同居 / 別居:</strong> ${emp.dependent.livingStatus || '未設定'}</p>
-                          <p style="margin: 6px 0; font-size: 14px;"><strong>年間収入見込:</strong> ${emp.dependent.estimatedIncome ? emp.dependent.estimatedIncome.toLocaleString() + ' 円' : '0 円'}</p>
-                          <p style="margin: 6px 0; font-size: 14px;"><strong>現在の状況 (職業等):</strong> ${emp.dependent.currentStatus || '未設定'}</p>
-                          <p style="margin: 6px 0; font-size: 14px; color: ${emp.dependent.hasDisability ? '#dc3545' : '#333'};"><strong>障害の有無:</strong> ${emp.dependent.hasDisability ? 'あり' : 'なし'}</p>
-                        </div>
-                      </div>
-                    ` : `
-                      <p style="margin: 6px 0; font-size: 14px; color: #666;">扶養する家族はいません（または未登録）</p>
-                    `}
+                    ${dependentsHtml}
                   </div>
                 </div>
               `;
@@ -199,20 +275,28 @@ const loadEmployees = async () => {
             target.innerText = '⏳ 取消中...';
             target.disabled = true;
 
-            await setDoc(doc(db, 'users', userId), {
-              employeeStatus: 'pending'
-            }, { merge: true });
+            // 🌟 念のため、実行者がちゃんとログインしているか防壁チェック
+            const currentCompanyId = localStorage.getItem('current_company_id');
+            if (!currentCompanyId) throw new Error("会社IDがありません");
 
-            await setDoc(doc(db, 'invites', userEmail), {
-              status: '確認待ち'
-            }, { merge: true });
+            // 🌟 setDoc({merge:true}) から、より安全な updateDoc へアップグレード！
+            // （万が一データが存在しない時は、勝手に作らずにちゃんとエラーにしてくれる）
+            await updateDoc(doc(db, 'users', userId), {
+              employeeStatus: 'pending',
+              updatedAt: new Date() // 💡 いつ取り消されたかの履歴も残しておくと完璧です
+            });
+
+            await updateDoc(doc(db, 'invites', userEmail), {
+              status: '確認待ち',
+              updatedAt: new Date()
+            });
 
             alert('↩️ 登録を取り消し、入社手続き（確認待ち）へ戻しました。');
             loadEmployees(); // リロードの代わりにリストを再描画
 
           } catch (err) {
             console.error("登録取消エラー:", err);
-            alert("取り消し処理に失敗しました。");
+            alert("取り消し処理に失敗しました。対象のデータが見つからない可能性があります。");
             target.innerText = '❌ 取消';
             target.disabled = false;
           }
@@ -226,7 +310,11 @@ const loadEmployees = async () => {
         tableBody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:40px; color:#999; font-style:italic;">${msg}</td></tr>`;
       }
 
-    } catch (error) {
+
+
+    });
+    } 
+    catch (error) {
       console.error("従業員マスタ取得エラー:", error);
       tableBody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:30px; color:#dc3545; font-weight:bold;">⚠️ データの読み込みに失敗しました。</td></tr>`;
     }

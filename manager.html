@@ -204,7 +204,7 @@
 
                 <div>
                   <label id="hr-base-label" style="font-size:11px;">基本給（月額）</label>
-                  <input type="number" id="hr-base-salary" placeholder="例: 250000" style="width: 100%; padding: 4px; box-sizing:border-box;">
+                  <input type="text" id="hr-base-salary" class="strict-number" inputmode="numeric" placeholder="例: 250000" style="width: 100%; padding: 4px; box-sizing:border-box;">
                 </div>
 
                 <div style="display: flex; align-items: center; padding-top: 18px;">
@@ -214,14 +214,14 @@
               </div>
               
               <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">
-                <div><label style="font-size:11px;">役職手当</label><input type="number" id="hr-allowance-role" class="hr-wage-input" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
-                <div><label style="font-size:11px;">家族手当</label><input type="number" id="hr-allowance-family" class="hr-wage-input" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
-                <div><label style="font-size:11px;">住宅手当</label><input type="number" id="hr-allowance-housing" class="hr-wage-input" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
+                <div><label style="font-size:11px;">役職手当</label><input type="text" id="hr-allowance-role" class="hr-wage-input strict-number" inputmode="numeric" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
+                <div><label style="font-size:11px;">家族手当</label><input type="text" id="hr-allowance-family" class="hr-wage-input strict-number" inputmode="numeric" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
+                <div><label style="font-size:11px;">住宅手当</label><input type="text" id="hr-allowance-housing" class="hr-wage-input strict-number" inputmode="numeric" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
               </div>
 
               <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
-                <div><label style="font-size:11px; color:#0056b3;">固定残業時間 (時間分)</label><input type="number" id="hr-fixed-ot-hours" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
-                <div><label style="font-size:11px; color:#0056b3;">固定残業手当 (固定的)</label><input type="number" id="hr-allowance-fixed-ot" class="hr-wage-input" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
+                <div><label style="font-size:11px; color:#0056b3;">固定残業時間 (時間分)</label><input type="text" id="hr-fixed-ot-hours" class="strict-number" inputmode="numeric" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
+                <div><label style="font-size:11px; color:#0056b3;">固定残業手当 (固定的)</label><input type="text" id="hr-allowance-fixed-ot" class="hr-wage-input strict-number" inputmode="numeric" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0"></div>
               </div>
 
               <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
@@ -231,7 +231,7 @@
                 </div>
                 <div>
                   <label style="font-size:11px;">通勤交通費（1ヶ月換算見込額）</label>
-                  <input type="number" id="hr-allowance-commute" class="hr-wage-input" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0">
+                  <input type="text" id="hr-allowance-commute" class="hr-wage-input strict-number" inputmode="numeric" style="width: 100%; padding: 4px; box-sizing:border-box;" value="0">
                 </div>
               </div>
 

@@ -1,194 +1,220 @@
-import { collection, getDocs, doc, updateDoc, query, where, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, query, where, getDoc, arrayUnion, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './config/firebase.js'; // ※ご自身の環境に合わせてください
 
 export async function initLifeEventUI() {
   console.log("🎉 ライフイベント画面（一括処理＆タスク自動生成版）が正常に読み込まれました！");
 
 
-// ==========================================
+　// ==========================================
   // 【パート1】従業員からの申請（統合版：名前変換・アコーディオン・一括承認）
   // ==========================================
   await loadUnifiedRequests(); // 画面を開いた時にデータを読み込む！
+// ==========================================
+// 【パート1】従業員からの申請（統合版：名前変換・アコーディオン・一括承認）
+// ==========================================
+// 💡 このファイルの一番上（importの下あたり）に置いてください。
+// await loadUnifiedRequests(); の呼び出しは、DOMContentLoaded の中に入れるとより安全です。
 
-  async function loadUnifiedRequests() {
-    // 🌟 HTML側の正しい箱（unified-request-container）を指定！
-    const container = document.getElementById('unified-request-container');
-    const badge = document.getElementById('request-badge');
+async function loadUnifiedRequests() {
+  const container = document.getElementById('unified-request-container');
+  const badge = document.getElementById('request-badge');
+  
+  if (!container) {
+    console.error("エラー: unified-request-container がHTMLに見つかりません");
+    return;
+  }
+
+  try {
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    if (!currentCompanyId) {
+        container.innerHTML = '<div style="color:red; padding:30px; text-align:center;">⚠️ 会社情報が読み込めません。</div>';
+        return;
+    }
+
+    // 🌟 1. 【防壁①】「自社」のユーザーだけで安全な辞書を作成（社員番号 ➔ 氏名 の保険用）
+    const usersQuery = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+    const usersSnap = await getDocs(usersQuery);
+    const userDict: any = {};
+    usersSnap.forEach(u => {
+      const data = u.data();
+      const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+      if (data.email) userDict[data.email] = fullName;
+      if (data.employeeId) userDict[data.employeeId] = fullName;
+    });
+
+    // 🌟 2. 【防壁②】自社の未承認申請（pending）を『すべて』取得！
+    // （※従業員側は changeRequests に一本化しました！）
+    const qChange = query(
+        collection(db, 'changeRequests'), 
+        where("companyId", "==", currentCompanyId), 
+        where('status', '==', 'pending')
+    );
     
-    if (!container) {
-      console.error("エラー: unified-request-container がHTMLに見つかりません");
+    const snapChange = await getDocs(qChange);
+    let allRequests: any[] = [];
+
+    snapChange.forEach(d => {
+      const data = d.data();
+      const isLifeEvent = data.type === "ライフイベント" || data.type === "保険証再発行" || data.type === "退職";
+      
+      allRequests.push({
+        id: d.id,
+        dbType: 'changeRequests', // 🌟 すべてここに統一
+        category: isLifeEvent ? 'life_event' : 'profile',
+        title: data.eventTitle || data.type || '申請',
+        email: data.userEmail || '', 
+        empId: data.employeeId || '未設定',
+        name: data.empName || userDict[data.employeeId] || '名称未設定', // 送信された名前を優先
+        date: data.createdAt ? new Date(data.createdAt.seconds * 1000).toLocaleDateString('ja-JP') : '今日',
+        rawDate: data.createdAt ? data.createdAt.seconds * 1000 : Date.now(),
+        options: data.supportOptions || [],
+        eventDate: data.eventDate || data.changeDate || '',
+        originalData: data
+      });
+    });
+
+    // 日付が新しい順に並び替え
+    allRequests.sort((a, b) => b.rawDate - a.rawDate);
+
+    if (badge) badge.innerText = `未承認: ${allRequests.length}件`;
+
+    if (allRequests.length === 0) {
+      container.innerHTML = `<div style="padding: 30px; text-align: center; color: #888;">📝 現在、未承認の申請はありません。</div>`;
       return;
     }
 
-    try {
-      // 1. ユーザー辞書作成（メールアドレス・IDから名前を引くため）
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const userDict: any = {};
-      usersSnap.forEach(u => {
-        const data = u.data();
-        const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
-        if (data.email) userDict[data.email] = fullName;
-        if (data.employeeId) userDict[data.employeeId] = fullName;
-      });
-
-      // 2. 「ライフイベント」と「住所変更」の両方を取得！
-      const qLife = query(collection(db, 'life_events'), where('status', '==', '未承認'));
-      const qChange = query(collection(db, 'changeRequests'), where('status', '==', 'pending'));
+    // 🌟 3. データの描画（アコーディオン形式）
+    let html = '';
+    allRequests.forEach(req => {
+      let detailHtml = '';
       
-      const [snapLife, snapChange] = await Promise.all([getDocs(qLife), getDocs(qChange)]);
-      let allRequests: any[] = [];
+      // ▼① ライフイベント（結婚・出産など）の場合
+      if (req.originalData.type === 'ライフイベント') {
+          detailHtml = `<p style="margin:0 0 5px; font-weight:bold; color:#d84315;">📅 発生日: ${req.eventDate}</p>`;
+          const evType = req.originalData.eventType;
+          
+          // 扶養削除
+          if (evType === 'remove_family') {
+              detailHtml += `<div style="margin-top: 5px; font-size: 13px; color: #333;">
+                  喪失対象: <strong>${req.originalData.targetFamilyName || '不明'}</strong><br>
+                  理由: ${req.originalData.removeReason || '不明'}<br>
+                  <span style="color: #d32f2f; font-weight: bold;">保険証: ${req.originalData.cardReturnStatus || '未回答'}</span>
+              </div>`;
+          } 
+          // 扶養追加
+          else if (evType === 'marriage' || evType === 'other') {
+              const dep = req.originalData.dependent || {};
+              detailHtml += `<div style="margin-top: 5px; font-size: 13px; color: #333;">
+                  追加家族: <strong>${dep.lastNameKanji || ''} ${dep.firstNameKanji || ''}</strong> (${dep.relation || '不明'})
+              </div>`;
+          }
 
-      // ライフイベントデータの整形
-      snapLife.forEach(d => {
-        const data = d.data();
-        allRequests.push({
-          id: d.id,
-          dbType: 'life_events',
-          category: 'life_event',
-          title: data.eventTitle,
-          email: data.userEmail,
-          empId: data.employeeId || '未設定',
-          name: userDict[data.userEmail] || userDict[data.employeeId] || data.userEmail || '名称未設定',
-          date: data.createdAt ? data.createdAt.toDate().toLocaleDateString('ja-JP') : '日付不明',
-          rawDate: data.createdAt ? data.createdAt.toMillis() : 0,
-          options: data.supportOptions || [],
-          eventDate: data.eventDate || '',
-          originalData: data
-        });
-      });
-
-      // 住所・氏名変更データの整形
-      snapChange.forEach(d => {
-        const data = d.data();
-        allRequests.push({
-          id: d.id,
-          dbType: 'changeRequests',
-          category: 'profile',
-          title: '住所・氏名変更',
-          email: '', 
-          empId: data.employeeId || '未設定',
-          name: userDict[data.employeeId] || '名称未設定',
-          date: data.createdAt ? new Date(data.createdAt).toLocaleDateString('ja-JP') : '日付不明',
-          rawDate: data.createdAt ? new Date(data.createdAt).getTime() : 0,
-          options: [],
-          eventDate: data.changeDate || '',
-          originalData: data
-        });
-      });
-
-      // 日付が新しい順に並び替え
-      allRequests.sort((a, b) => b.rawDate - a.rawDate);
-
-      if (badge) badge.innerText = `未承認: ${allRequests.length}件`;
-
-      // 0件の時の表示
-      if (allRequests.length === 0) {
-        container.innerHTML = `<div style="padding: 30px; text-align: center; color: #888;">📝 現在、未承認の申請はありません。</div>`;
-        return;
+          // オプション（出産などの申請）
+// オプション（出産などの申請）
+if (req.options && req.options.length > 0) {
+  detailHtml += `<ul style="margin: 5px 0 0; padding-left: 20px; font-size: 13px; color: #333; font-weight: bold;">`;
+  req.options.forEach((opt: string) => {
+    let label = opt;
+    // 🌟 英語のシステム名を、従業員画面の文章に合わせて日本語翻訳！
+    if (opt === 'allowance') label = '💰 産休中のお給料の代わり（出産手当金）を申請';
+    else if (opt === 'sankyu_exemption') label = '🆓 産休中の社会保険料免除の手続き';
+    else if (opt === 'hellowork') label = '🏢 ハローワークからの育休手当（育児休業給付金）を申請';
+    else if (opt === 'exemption') label = '🆓 育休中の社会保険料免除の手続き';
+    else if (opt === 'monthly_change') label = '🛡️ 復帰後の手取りを守る特例（報酬月額変更）を申請';
+    else if (opt === 'pension_special') label = '👴 将来の年金が減らないようにする特例（標準報酬特例）を申請';
+    
+    detailHtml += `<li style="margin-bottom: 4px;">${label}</li>`;
+  });
+  detailHtml += `</ul>`;
+} else {
+  detailHtml += `<p style="margin:0; font-size:12px; color:#666;">（必要なサポート手続きの選択はありません）</p>`;
+}
+      } 
+      // ▼② 保険証再発行の場合
+      else if (req.originalData.type === '保険証再発行') {
+          const dep = req.originalData.dependent || {};
+          detailHtml = `<p style="margin:0 0 5px; font-weight:bold; color:#d84315;">📅 発生日: ${req.eventDate}</p>
+              <div style="font-size: 13px; color: #333;">
+                  理由: <strong>${dep.reason || '不明'}</strong><br>
+                  警察届出: ${dep.policeReport || '不要'}<br>
+                  メモ: ${dep.memo || 'なし'}
+              </div>`;
+      }
+      // ▼③ 退職の場合
+      else if (req.originalData.type === '退職') {
+          const dep = req.originalData.dependent || {};
+          detailHtml = `<p style="margin:0 0 5px; font-weight:bold; color:#d84315;">🚪 退職日: ${req.eventDate}</p>
+              <div style="font-size: 13px; color: #333;">
+                  保険証返却: <strong>${dep.insuranceReturn || '不明'}</strong><br>
+                  離職票発行: <span style="color: #d32f2f; font-weight: bold;">${dep.unemploymentSlip || '未選択'}</span>
+              </div>`;
+      }
+      // ▼④ 住所・氏名変更の場合
+      else {
+          detailHtml = `<p style="margin:0 0 5px; font-weight:bold; color:#0056b3;">📅 変更発生日: ${req.eventDate}</p>
+              <div style="font-size:12px; color:#555; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <div><strong>新氏名:</strong> ${req.originalData.newLastName || ''} ${req.originalData.newFirstName || ''}</div>
+                <div><strong>新住所:</strong> 〒${req.originalData.newZip || ''} ${req.originalData.newAddress || ''}</div>
+                <div><strong>通勤経路:</strong> ${req.originalData.newRoute || '変更なし'}</div>
+                <div><strong>新定期代:</strong> ${req.originalData.newPass ? req.originalData.newPass.toLocaleString() + ' 円' : '変更なし'}</div>
+              </div>`;
       }
 
-      // 3. データの描画（アコーディオン形式）
-      let html = '';
-      allRequests.forEach(req => {
-        let detailHtml = '';
-        if (req.dbType === 'life_events') {
-          detailHtml = `<p style="margin:0 0 5px; font-weight:bold; color:#d84315;">📅 予定日: ${req.eventDate}</p>`;
+      // 🌟 📎 全共通：添付ファイルがある場合はリンクを表示
+      if (req.originalData.attachedFiles && req.originalData.attachedFiles.length > 0) {
+          detailHtml += `<div style="margin-top: 8px; font-size: 12px; background: #e3f2fd; padding: 6px; border-radius: 4px;">📎 添付書類: `;
+          req.originalData.attachedFiles.forEach((file: any) => {
+              detailHtml += `<a href="${file.fileUrl}" target="_blank" style="color: #0056b3; margin-right: 12px; text-decoration: underline; font-weight: bold;">📄 ${file.docName}</a>`;
+          });
+          detailHtml += `</div>`;
+      }
 
-            // 👇👇👇 🌟 ここから追加！ 🌟 👇👇👇
-            const evType = req.originalData.eventType;
-                    
-            // 1. 👋 扶養喪失（外す）の表示
-            if (evType === 'remove_family') {
-                detailHtml += `<div style="margin-top: 5px; font-size: 13px; color: #333;">
-                    対象: <strong>${req.originalData.targetFamilyName || '不明'}</strong><br>
-                    理由: ${req.originalData.removeReason || '不明'}<br>
-                    <span style="color: #d32f2f; font-weight: bold;">保険証の状況: ${req.originalData.cardReturnStatus || '未回答'}</span>
-                </div>`;
-            } 
-            // 2. 💍 扶養追加（結婚・その他）の表示
-            else if (evType === 'marriage' || evType === 'other') {
-                const dep = req.originalData.dependent || {};
-                detailHtml += `<div style="margin-top: 5px; font-size: 13px; color: #333;">
-                    追加する家族: <strong>${dep.lastNameKanji || ''} ${dep.firstNameKanji || ''}</strong> (${dep.relation || '不明'})
-                </div>`;
-            }
+      const badgeColor = req.category === 'life_event' ? '#fd7e14' : '#0d6efd';
+      const badgeBg = req.category === 'life_event' ? '#fff3cd' : '#cfe2ff';
 
-            // 3. 📎 添付ファイルがある場合はリンクを表示（全ライフイベント共通）
-            if (req.originalData.attachedFiles && req.originalData.attachedFiles.length > 0) {
-                detailHtml += `<div style="margin-top: 8px; font-size: 12px; background: #e3f2fd; padding: 6px; border-radius: 4px;">📎 添付書類: `;
-                req.originalData.attachedFiles.forEach((file: any) => {
-                    detailHtml += `<a href="${file.fileUrl}" target="_blank" style="color: #0056b3; margin-right: 12px; text-decoration: underline; font-weight: bold;">📄 ${file.docName}</a>`;
-                });
-                detailHtml += `</div>`;
-            }
-            // 👆👆👆 🌟 追加ここまで！ 🌟 👆👆👆
-
-          if (req.options.length > 0) {
-            detailHtml += `<ul style="margin: 5px 0 0; padding-left: 20px; font-size: 12px; color: #555;">`;
-            req.options.forEach((opt: string) => {
-              const label = opt === 'allowance' ? '💰 出産手当金の申請' : opt === 'exemption' ? '🆓 産休・育休の保険料免除' : opt === 'hellowork' ? '🏢 育児休業給付金の申請' : opt === 'monthly_change' ? '🛡️ 育休終了時 報酬月額変更' : opt === 'pension_special' ? '👴 養育期間 標準報酬特例' : opt;
-              detailHtml += `<li>${label}</li>`;
-            });
-            detailHtml += `</ul>`;
-          } else {
-            detailHtml += `<p style="margin:0; font-size:12px; color:#666;">（必要なサポート手続きの選択はありません）</p>`;
-          }
-        } else {
-          detailHtml = `<p style="margin:0 0 5px; font-weight:bold; color:#0056b3;">📅 変更発生日: ${req.eventDate}</p>
-            <div style="font-size:12px; color:#555; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-              <div><strong>新氏名:</strong> ${req.originalData.newLastName || ''} ${req.originalData.newFirstName || ''}</div>
-              <div><strong>新住所:</strong> 〒${req.originalData.newZip || ''} ${req.originalData.newAddress || ''}</div>
-              <div><strong>新通勤経路:</strong> ${req.originalData.newRoute || '変更なし'}</div>
-              <div><strong>新定期代:</strong> ${req.originalData.newPass ? req.originalData.newPass.toLocaleString() + ' 円' : '変更なし'}</div>
-            </div>`;
-        }
-
-        const badgeColor = req.category === 'life_event' ? '#fd7e14' : '#0d6efd';
-        const badgeBg = req.category === 'life_event' ? '#fff3cd' : '#cfe2ff';
-
-        html += `
-          <div class="req-row" data-category="${req.category}" style="border-bottom: 1px solid #f3f4f6;">
-            <div class="req-summary" style="display: flex; align-items: center; padding: 12px 15px; cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='transparent'">
-              <input type="checkbox" class="req-checkbox" value="${req.id}__${req.dbType}" data-options='${JSON.stringify(req.options)}' data-email="${req.email}" data-event="${req.category === 'life_event' ? req.originalData.eventType : 'profile'}" data-empname="${req.name}" style="margin-right: 15px; cursor: pointer;">
-              
-              <div style="flex: 1.5; font-size: 14px; font-weight: bold; color: #333;">
-                👤 ${req.name}<br><span style="font-size: 11px; color: #888; font-weight: normal;">ID: ${req.empId}</span>
-              </div>
-              <div style="flex: 2;">
-                <span style="background: ${badgeBg}; color: ${badgeColor}; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">${req.title}</span>
-              </div>
-              <div style="width: 100px; text-align: center; font-size: 12px; color: #666;">${req.date}</div>
-              <div class="toggle-icon" style="width: 80px; text-align: center; color: #0056b3; font-size: 12px; font-weight: bold;">▼ 詳細</div>
+      // HTML枠組み
+      html += `
+        <div class="req-row" data-category="${req.category}" style="border-bottom: 1px solid #f3f4f6;">
+          <div class="req-summary" style="display: flex; align-items: center; padding: 12px 15px; cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='transparent'">
+            <input type="checkbox" class="req-checkbox" value="${req.id}" data-options='${JSON.stringify(req.options)}' data-email="${req.email}" data-event="${req.category === 'life_event' ? req.originalData.eventType : 'profile'}" data-empname="${req.name}" style="margin-right: 15px; cursor: pointer;">
+            
+            <div style="flex: 1.5; font-size: 14px; font-weight: bold; color: #333;">
+              👤 ${req.name}<br><span style="font-size: 11px; color: #888; font-weight: normal;">ID: ${req.empId}</span>
             </div>
+            <div style="flex: 2;">
+              <span style="background: ${badgeBg}; color: ${badgeColor}; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">${req.title}</span>
+            </div>
+            <div style="width: 100px; text-align: center; font-size: 12px; color: #666;">${req.date}</div>
+            <div class="toggle-icon" style="width: 80px; text-align: center; color: #0056b3; font-size: 12px; font-weight: bold;">▼ 詳細</div>
+          </div>
 
-            <div class="req-detail" style="display: none; padding: 15px 15px 20px 45px; background: #fafafa; border-top: 1px dashed #e5e7eb;">
-              ${detailHtml}
-              <div style="text-align: right; margin-top: 15px;">
-                <button class="btn-approve-single" 
-                        data-val="${req.id}__${req.dbType}"
-                        data-options='${JSON.stringify(req.options|| [])}'
-                        data-email="${req.email}"
-                        data-event="${req.category === 'life_event' ? req.originalData.eventType : 'profile'}"
-                        data-empname="${req.name}"
-                        style="background: #fff; color: #28a745; border: 1px solid #28a745; padding: 6px 16px; border-radius: 4px; font-size: 13px; font-weight: bold; cursor: pointer; transition: 0.2s;"
-                        onmouseover="this.style.background='#28a745'; this.style.color='#fff';"
-                        onmouseout="this.style.background='#fff'; this.style.color='#28a745';">
-                  内容を確認して承認
-                </button>
-              </div>
+          <div class="req-detail" style="display: none; padding: 15px 15px 20px 45px; background: #fafafa; border-top: 1px dashed #e5e7eb;">
+            ${detailHtml}
+            <div style="text-align: right; margin-top: 15px;">
+              <button class="btn-approve-single" 
+                      data-val="${req.id}"
+                      data-options='${JSON.stringify(req.options|| [])}'
+                      data-email="${req.email}"
+                      data-event="${req.category === 'life_event' ? req.originalData.eventType : 'profile'}"
+                      data-empname="${req.name}"
+                      style="background: #fff; color: #28a745; border: 1px solid #28a745; padding: 6px 16px; border-radius: 4px; font-size: 13px; font-weight: bold; cursor: pointer; transition: 0.2s;"
+                      onmouseover="this.style.background='#28a745'; this.style.color='#fff';"
+                      onmouseout="this.style.background='#fff'; this.style.color='#28a745';">
+                内容を確認して承認
+              </button>
             </div>
           </div>
-        `;
-      });
+        </div>
+      `;
+    });
 
-      container.innerHTML = html;
-      attachReqEvents(); 
+    container.innerHTML = html;
+    attachReqEvents(); // 先ほど送っていただいた「アコーディオン開閉やチェックボックスの制御」の関数です。そのまま使えます！
 
-    } catch (error) {
-      console.error("統合申請の読み込みエラー:", error);
-    }
+  } catch (error) {
+    console.error("統合申請の読み込みエラー:", error);
   }
-
+}
 
 
   // 4. イベント（アコーディオン・一括承認・フィルター）をセットする関数
@@ -255,231 +281,282 @@ export async function initLifeEventUI() {
 
     rowChecks.forEach(cb => cb.addEventListener('change', updateBulkBtn));
 
-// 🌟 神・自動タスク生成エンジン（完全版）
+// 🌟🌟🌟 神・自動タスク生成エンジン（全申請対応・統合版） 🌟🌟🌟
 const executeApproval = async (targets: any[]) => {
-    console.log("🚀 一括承認スタート！処理件数:", targets.length);
-    if (!confirm(`${targets.length}件の申請を承認し、タスクを生成しますか？`)) return;
+  console.log("🚀 承認・タスク化エンジン起動！ 処理件数:", targets.length);
+  if (!confirm(`${targets.length}件の申請を承認し、タスクを生成しますか？\n（※住所変更・扶養追加などのマスタは自動更新されます）`)) return;
+// 👇 🌟 ここに `window.prompt` のコードを追加します！
+const customMessage = window.prompt(
+  `${targets.length}件の申請を承認し、タスクを生成します。\n対象者に送る通知メッセージを入力してください：\n（※空白のままOKを押すと標準の定型文が送信されます）`,
+  "申請いただいた手続きが労務にて承認され、社内処理が完了しました。"
+);
 
-    try {
-        
-        const tasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
+if (customMessage === null) return; // キャンセルなら処理ストップ
 
-        for (const target of targets) {
+  try {
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) {
+          alert("会社情報が読み込めません。再読み込みしてください。");
+          return;
+      }
+      
+      const taskKey = `hr_tasks_${currentCompanyId}`;
+      const tasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
 
-            
-            // 1. IDとDBタイプの抽出（この3行に差し替えてください）
-            const dbType = target.val.includes('life_events') ? 'life_events' : 'changeRequests';
-            let docId = target.val;
-            if (docId.includes('/')) docId = docId.split('/').pop() || "";
-            docId = docId.replace('_life_events', '').replace('_changeRequests', '');
-            docId = docId.replace(/_+$/, ""); 
-        
-            // 2. ここで宣言しているから、これ以降の行でいつでも使えます！
-            const baseName = target.empName || '氏名不明';
-            const safeDate = target.eventDate || new Date().toISOString().split('T')[0];
-        
-            // 3. Firebase更新（ここで docId や docRef を使う）
-            const docRef = doc(db, dbType, docId);
-            const docSnap = await getDoc(docRef);
-            let fetchedEventData: any = {};
-        
-            if (docSnap.exists()) {
-                fetchedEventData = docSnap.data();
-                await updateDoc(docRef, { status: '承認済' });
+      for (const target of targets) {
+          const docId = target.val; 
+          const docRef = doc(db, 'changeRequests', docId);
+          const docSnap = await getDoc(docRef);
+          
+          if (!docSnap.exists()) {
+              console.warn(`⚠️ 申請データが見つかりません: ${docId}`);
+              continue;
+          }
 
-            // 🌟 ここから追加：保険証再発行の場合のタスク生成
-            if (fetchedEventData.event === 'insurance_reissue') {
-                // 先ほどFirebaseに送った詳細情報（理由や警察への届け出など）を取り出す
-                const reissueInfo = fetchedEventData.dependent || {}; 
+          const reqData = docSnap.data();
 
-                tasks.push({
-                    id: Date.now() + 22, // 統一: Date.now() + 数字の形式
-                    title: '【役所提出】健康保険 被保険者証再交付申請書', // 統一: 氏名は入れない
-                    empName: baseName,
-                    source: 'ライフイベント申請', // 統一: カンバンのラベル用に追加
-                    deadline: safeDate,
-                    status: 'todo',
-                    agency: '年金事務所',
-                    memo: `【申請理由】${reissueInfo.reason || '不明'}\n【警察届出】${reissueInfo.policeReport || '-'}\n【備考】${reissueInfo.memo || 'なし'}`
-                });
-            }
-            // 🌟 ここまで追加
+          if (reqData.companyId && reqData.companyId !== currentCompanyId) {
+              console.warn(`🚨 他社のデータアクセスの可能性を検知したためスキップしました。`);
+              continue;
+          }
 
-            // 👶 出産
-            else if (target.event === 'birth') {
-             // 🌟 安全装置：optionsが配列でない場合は空配列にする
-                const opts = Array.isArray(target.options) ? target.options : [];
-                
-                console.log("🍼 出産タスク生成開始。オプション:", opts);
+          const baseName = reqData.empName || target.empName || '氏名不明';
+          const safeDate = reqData.eventDate || reqData.changeDate || new Date().toISOString().split('T')[0];
+          const empId = reqData.employeeId;
 
-                if (target.options.includes('allowance')) 
-                    tasks.push({ id: Date.now() + 1, 
-                  　title: `【役所提出】健康保険 出産手当金支給申請書`, 
-                  　empName: baseName, 
-                  　source: 'ライフイベント申請', 
-                  　deadline: safeDate, 
-                  　status: 'todo', 
-                  　agency: '健保組合',
-                  　dependent: fetchedEventData.dependent || {}
-                });
+          // ==========================================
+          // 🌟 1. 申請の種類に応じた「タスク生成」＆「マスタ更新」
+          // ==========================================
+          
+          // ▼ ① 住所・氏名変更
+          if (reqData.type === '住所・氏名変更') {
+              const q = query(collection(db, "users"), where("companyId", "==", currentCompanyId), where("employeeId", "==", empId));
+              const empSnapshot = await getDocs(q);
+              
+              if (!empSnapshot.empty) {
+                  const empDoc = empSnapshot.docs[0];
+                  if (empDoc) {
+                      const updateData: any = {};
+                      if (reqData.newZip) updateData.zipCode = reqData.newZip;
+                      if (reqData.newAddress) updateData.currentAddress = reqData.newAddress;
+                      if (reqData.newPass) updateData['allowances.commute'] = reqData.newPass;
+                      if (reqData.newLastName) updateData.lastNameKanji = reqData.newLastName;
+                      if (reqData.newFirstName) updateData.firstNameKanji = reqData.newFirstName;
+                      await updateDoc(doc(db, "users", empDoc.id), updateData);
+                  }
+              }
 
-                if (target.options.includes('exemption')) 
-                    tasks.push({ id: Date.now() + 2, 
-                  　title: `【役所提出】育児休業等取得者申出書`, 
-                  　empName: baseName, source: 'ライフイベント申請', 
-                  　deadline: safeDate, status: 'todo', agency: '年金事務所',
-                    startDate: target.startDate || "",
-                    endDate: target.endDate || ""
-                 });
-
-
-                if (target.options.includes('hellowork')) 
-                    tasks.push({ id: Date.now() + 3,
-                  　title: `【役所提出】雇用保険 育児休業給付金支給申請書`, 
-                  　empName: baseName, 
-                  　source: 'ライフイベント申請', 
-                  　deadline: safeDate, 
-                  　status: 'todo', 
-                  　agency: 'ハローワーク' });
-
-                  // 🌟 今回新しく追加するブロック：産前産後休業（産休）の保険料免除タスク
-            if (opts.includes('sankyu_exemption')) {
-              tasks.push({ 
-                  id: Date.now() + 4, // 既存の1,2,3と被らないように +4 にしています
-                  title: '【役所提出】産前産後休業取得者申出書',
+              tasks.push({
+                  id: Date.now() + Math.floor(Math.random() * 1000),
+                  title: `【役所提出】${baseName}様: 被保険者 住所・氏名変更届`,
                   empName: baseName,
-                  source: 'ライフイベント申請',
-                  deadline: safeDate,
-                  status: 'todo',
                   agency: '年金事務所',
-                  // 🌟 超重要！さっき作ったCSVエンジンが拾えるように日付データをタスクに埋め込む
-                  expectedBirthDate: target.eventDate, 
-                  startDate: target.startDate || "",  // 🌟 ここでタスクに持たせる！
-                  endDate: target.endDate || ""       // 🌟 ここでタスクに持たせる！
-                  // startDate: target.startDate || "", // ※もし画面で産休開始日などを入力させていればここに入れる
-                  // endDate: target.endDate || ""
+                  status: 'todo',
+                  deadline: new Date(new Date().getTime() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                  source: '従業員申請 (マスタ更新済)',
+                  memo: `【承認済】マスタは自動更新されました。\ne-GovからCSVを出力して提出してください。\n（※マイナンバー連携済みの場合は提出不要です）`
               });
           }
-            }
-            // 🏠 氏名・住所変更
-            else if (target.event === 'profile') {
-                tasks.push({ id: Date.now() + 4, title: `【役所提出】健康保険 被保険者氏名変更（訂正）届 / 住所変更届`, empName: baseName, source: '住所・氏名変更', deadline: safeDate, status: 'todo', agency: '年金事務所' });
-            }
-            // 🔙 復職
-            else if (target.event === 'reinstatement') {
-                let returnDateStr = target.eventDate;
-                if (!returnDateStr || returnDateStr.trim() === '' || returnDateStr === 'undefined') {
-                    returnDateStr = new Date().toISOString().split('T')[0];
-                }
-                tasks.push({ id: Date.now() + 6, title: `【システム処理】復職に伴う社会保険料の控除再開`, empName: baseName, source: 'ライフイベント(復職)', deadline: returnDateStr, status: 'todo', agency: '社内' });
-                tasks.push({ id: Date.now() + 7, title: `【役所提出】育児休業等終了時報酬月額変更届`, empName: baseName, source: '復職申請', deadline: returnDateStr, status: 'todo', agency: '年金事務所' });
-                
-                const cName = fetchedEventData.childName || '未登録';
-                const cDob = fetchedEventData.childBirthDate || '未登録';
-                tasks.push({ id: Date.now() + 8, title: `【役所提出】養育期間標準報酬月額特例申出書`, empName: baseName, childName: cName, childBirthDate: cDob, source: '復職申請', deadline: returnDateStr, status: 'todo', agency: '年金事務所' });
-            }
-            // 💍 扶養追加（結婚・その他）
-            // 🌟 修正：再発行(insurance_reissue)と退社(resignation)の場合は、ここをスルーさせる
-　　　　　　　else if ((target.event === 'marriage' || target.event === 'other' || target.event === 'family_add') && fetchedEventData.event !== 'insurance_reissue' && fetchedEventData.event !== 'resignation') {
-                if (target.event === 'marriage') {
-                    tasks.push({ id: Date.now() + 19, title: '氏名変更・マイナンバー連携', empName: baseName, source: 'ライフイベント申請', deadline: safeDate, status: 'todo', agency: '社内労務' });
-                }
-                const dep = fetchedEventData.dependent || {};
-                tasks.push({ 
-                    id: Date.now() + 20, 
-                    title: `【役所提出】健康保険 被扶養者異動届（取得）`, 
-                    empName: baseName, 
-                    source: "ライフイベント申請", 
-                    dependentName: `${dep.lastNameKanji || ''} ${dep.firstNameKanji || ''}`.trim(), 
-                    relation: dep.relation || '', 
-                    birthDate: dep.birthDate || '', 
-                    income: dep.income || '', 
-                    living: dep.livingStatus || '', 
-                    deadline: safeDate, 
-                    status: 'todo', 
-                    agency: '年金事務所' 
-                });
-            }
-            // 👋 扶養喪失（外す）
-            else if (target.event === 'remove_family') {
-                tasks.push({ 
-                    id: Date.now() + 21, 
-                    title: `【役所提出】健康保険 被扶養者異動届（喪失）`, 
-                    empName: baseName, 
-                    source: 'ライフイベント申請', 
-                    targetFamilyName: fetchedEventData.targetFamilyName || '', 
-                    removeReason: fetchedEventData.removeReason || '', 
-                    deadline: fetchedEventData.eventDate || safeDate, 
-                    status: 'todo', 
-                    agency: '年金事務所' 
-                });
-            }
+          
+          // ▼ ② 退職
+          else if (reqData.type === '退職') {
+              const dep = reqData.dependent || {};
+              tasks.push({
+                  id: Date.now() + Math.floor(Math.random() * 1000),
+                  title: `【役所提出】${baseName}様: 資格喪失届 ＆ 離職票発行`,
+                  empName: baseName,
+                  agency: '年金事務所 / ハローワーク',
+                  status: 'todo',
+                  deadline: safeDate,
+                  source: '退職申請',
+                  memo: `【退職日】${safeDate}\n【保険証返却】${dep.insuranceReturn || '不明'}\n【離職票】${dep.unemploymentSlip || '未選択'}`
+              });
+          }
 
-// ... (他の else if が続く) ...
+          // ▼ ③ 保険証再発行
+          else if (reqData.type === '保険証再発行') {
+              const dep = reqData.dependent || {};
+              tasks.push({
+                  id: Date.now() + Math.floor(Math.random() * 1000),
+                  title: `【役所提出】${baseName}様: 健康保険 被保険者証再交付申請`,
+                  empName: baseName,
+                  agency: '年金事務所',
+                  status: 'todo',
+                  deadline: safeDate,
+                  source: '再発行申請',
+                  memo: `【理由】${dep.reason || '不明'}\n【警察届出】${dep.policeReport || '不要'}\n【備考】${dep.memo || 'なし'}`
+              });
+          }
 
-            // 🚪 退社手続き（資格喪失）
-            // 🌟 修正：画面から来る"other"ではなく、Firebaseに保存した"resignation"で正確に判定する
-            else if (fetchedEventData.event === 'resignation') {
-            const resignInfo = fetchedEventData.dependent || {}; 
-            const resignDate = resignInfo.resignDate || safeDate; // 退職予定日
-            const needSlip = resignInfo.unemploymentSlip === '必要';
+          // ▼ ④ ライフイベント（結婚・出産・扶養など）
+          else if (reqData.type === 'ライフイベント') {
+              const evType = reqData.eventType;
+              const dep = reqData.dependent || {};
 
-            // 1. 【必須】健康保険・厚生年金保険 被保険者資格喪失届
-            tasks.push({
-                id: Date.now() + 30, // 順番が被らないようにIDを設定
-                title: '【役所提出】健康保険・厚生年金保険 被保険者資格喪失届',
-                empName: baseName,
-                source: 'ライフイベント申請',
-                deadline: resignDate, // 期限の目安は退職日
-                status: 'todo',
-                agency: '年金事務所',
-                memo: `【退職日】${resignDate}\n【保険証返却】${resignInfo.insuranceReturn || '不明'}`
-            });
+              // 扶養を外す
+              if (evType === 'remove_family') {
+                  tasks.push({
+                      id: Date.now() + Math.floor(Math.random() * 1000),
+                      title: `【役所提出】${baseName}様: 被扶養者（異動）届（減少）`,
+                      empName: baseName,
+                      agency: '年金事務所',
+                      status: 'todo',
+                      deadline: safeDate,
+                      source: 'ライフイベント',
+                      memo: `【対象】${reqData.targetFamilyName || '不明'}\n【理由】${reqData.removeReason || '不明'}\n【保険証】${reqData.cardReturnStatus || '不明'}`
+                  });
+              } 
+              // 💍 扶養に入れる（★マスタ自動追加搭載！）
+              else if (evType === 'marriage' || evType === 'other') {
+                  // 1. タスク生成
+                  tasks.push({
+                      id: Date.now() + Math.floor(Math.random() * 1000),
+                      title: `【役所提出】${baseName}様: 被扶養者（異動）届（増加）`,
+                      empName: baseName,
+                      agency: '年金事務所',
+                      status: 'todo',
+                      deadline: safeDate,
+                      source: 'ライフイベント',
+                      memo: `【追加家族】${dep.lastNameKanji} ${dep.firstNameKanji} (${dep.relation})`
+                  });
 
-            // 2. 【必須】雇用保険 被保険者資格喪失届
-            tasks.push({
-                id: Date.now() + 31,
-                title: '【役所提出】雇用保険 被保険者資格喪失届',
-                empName: baseName,
-                source: 'ライフイベント申請',
-                deadline: resignDate,
-                status: 'todo',
-                agency: 'ハローワーク',
-                memo: `【退職日】${resignDate}\n【離職票の発行】${resignInfo.unemploymentSlip || '不要'}`
-            });
+                  // 2. 社員マスタ（users）に家族データを追加
+                  const q = query(collection(db, "users"), where("companyId", "==", currentCompanyId), where("employeeId", "==", empId));
+                  const empSnapshot = await getDocs(q);
+                  
+                  if (!empSnapshot.empty) {
+                      const empDoc = empSnapshot.docs[0];
+                      if (empDoc) {
+                          // 🌟 arrayUnionを使って、既存の家族配列（dependents）に安全にドッキング！
+                          await updateDoc(doc(db, "users", empDoc.id), {
+                              dependents: arrayUnion({
+                                  lastNameKanji: dep.lastNameKanji || '',
+                                  firstNameKanji: dep.firstNameKanji || '',
+                                  lastNameKana: dep.lastNameKana || '',
+                                  firstNameKana: dep.firstNameKana || '',
+                                  birthDate: dep.birthDate || '',
+                                  relation: dep.relation || '',
+                                  income: dep.income || '',
+                                  livingStatus: dep.livingStatus || '',
+                                  addedAt: new Date().toISOString()
+                              })
+                          });
+                      }
+                  }
+              }
+ // ▼ 出産（オプションに応じて最大5つのタスクを生成！）
+ else if (evType === 'birth') {
+  // 🌟 過去のデータや画面のデータなど、どこからでも確実に拾う超・安全設計！
+  const dbOpts = reqData.supportOptions || reqData.options || [];
+  const opts = dbOpts.length > 0 ? dbOpts : (target.options || []);
 
-            // 3. 【条件付き】雇用保険 被保険者離職証明書（離職票が必要な場合のみ生成）
-            if (needSlip) {
-                tasks.push({
-                    id: Date.now() + 32,
-                    title: '【役所提出】雇用保険 被保険者離職証明書（離職票発行用）',
-                    empName: baseName,
-                    source: 'ライフイベント申請',
-                    deadline: resignDate,
-                    status: 'todo',
-                    agency: 'ハローワーク',
-                    memo: `【退職日】${resignDate}\n※本人が離職票の発行を希望しています。`
-                });
-            }
-        }
+  if (opts.includes('allowance')) {
+      tasks.push({
+          id: Date.now() + Math.floor(Math.random() * 1000) + 1,
+          title: `【役所提出】${baseName}様: 出産手当金 支給申請書`,
+          empName: baseName,
+          agency: '健保組合',
+          status: 'todo',
+          deadline: safeDate,
+          source: 'ライフイベント'
+      });
+  }
+// ▼ 産休・育休の免除申請（タスク生成 ＋ マスタの免除フラグON！）
+if (opts.includes('exemption') || opts.includes('sankyu_exemption')) {
+  // 1. カンバンタスクの生成
+  tasks.push({
+      id: Date.now() + Math.floor(Math.random() * 1000) + 2,
+      title: `【役所提出】${baseName}様: 産前産後休業/育児休業等 取得者申出書`,
+      empName: baseName,
+      agency: '年金事務所',
+      status: 'todo',
+      deadline: safeDate,
+      source: 'ライフイベント'
+  });
 
-        } else {
-            console.warn(`ドキュメント ${docId} は存在しません`);
-            continue;
-        }
-        } // 🌟 forループ終了
+  // 🌟 2. 追加！社員マスタ（users）に「社会保険料免除フラグ」を立てる！
+  const q = query(collection(db, "users"), where("companyId", "==", currentCompanyId), where("employeeId", "==", empId));
+  const empSnapshot = await getDocs(q);
+  
+  if (!empSnapshot.empty) {
+      const empDoc = empSnapshot.docs[0];
+      if (empDoc) {
+          await updateDoc(doc(db, "users", empDoc.id), {
+              socialInsuranceExempt: true, // 💡 これが給与計算を0円にする最強のフラグ！
+              leaveStatus: '休業中(免除)'  // 💡 バッジ表示用のステータス
+          });
+      }
+  }
+}
+  if (opts.includes('hellowork')) {
+      tasks.push({
+          id: Date.now() + Math.floor(Math.random() * 1000) + 3,
+          title: `【役所提出】${baseName}様: 育児休業給付金 支給申請書`,
+          empName: baseName,
+          agency: 'ハローワーク',
+          status: 'todo',
+          deadline: safeDate,
+          source: 'ライフイベント'
+      });
+  }
+  if (opts.includes('monthly_change')) {
+      tasks.push({
+          id: Date.now() + Math.floor(Math.random() * 1000) + 4,
+          title: `【役所提出】${baseName}様: 育児休業等終了時 報酬月額変更届`,
+          empName: baseName,
+          agency: '年金事務所',
+          status: 'todo',
+          deadline: safeDate,
+          source: 'ライフイベント'
+      });
+  }
+  if (opts.includes('pension_special')) {
+      tasks.push({
+          id: Date.now() + Math.floor(Math.random() * 1000) + 5,
+          title: `【役所提出】${baseName}様: 養育期間 標準報酬月額特例申出書`,
+          empName: baseName,
+          agency: '年金事務所',
+          status: 'todo',
+          deadline: safeDate,
+          source: 'ライフイベント'
+      });
+  }
+}
+          }
 
-// 3. ループ終了後、まとめて保存・通知
-localStorage.setItem('hr_tasks', JSON.stringify(tasks));
-alert(`${targets.length} 件の承認とタスク生成が完了しました！`);
-window.location.reload(); 
+          // ==========================================
+          // 🌟 2. 申請のステータスを「承認済み」に変更
+          // ==========================================
+          await updateDoc(docRef, { status: 'approved' }); 
 
-} catch (err) { // ★try終了、catch開始
-console.error("承認エラー:", err);
-alert('処理中にエラーが発生しました。');
-} // ★catch終了
+          // ==========================================
+          // 🌟 3. 従業員への自動通知（定型文）を発行！
+          // ==========================================
+          const reqTypeLabel = reqData.type === 'ライフイベント' ? reqData.eventTitle : reqData.type;
+          
+          await addDoc(collection(db, "notifications"), {
+              companyId: currentCompanyId,
+              targetUserId: reqData.userId || "",       // 🔥 UIDで確実な紐付け！
+              targetEmployeeId: empId || "",            // 🔥 社員番号で確実な紐付け！
+              targetEmpName: baseName,                  // 画面表示用
+              title: "✅ 申請が承認されました",
+              message: `申請いただいた「${reqTypeLabel}」の手続きが労務にて承認され、社内処理が完了しました。`,
+              isArchived: false,
+              createdAt: serverTimestamp()
+          });
+
+      } // ループ終了
+
+      localStorage.setItem(taskKey, JSON.stringify(tasks));
+      
+      alert("🌟 承認完了！\n選択した申請をタスク化し、対象者への通知を送信しました！");
+      location.reload(); 
+
+  } catch (error) {
+      console.error("承認処理エラー:", error);
+      alert("承認処理中にエラーが発生しました。");
+  }
 };
-
     // 個別ボタンの動作
     document.querySelectorAll('.btn-approve-single').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -676,7 +753,12 @@ alert('処理中にエラーが発生しました。');
         btnBulkGen.disabled = true;
 
         try {
-          const tasks = JSON.parse(localStorage.getItem('hr_tasks') || '[]');
+          // 🌟 1. 会社IDを取得して専用キーを作成！
+          const currentCompanyId = localStorage.getItem('current_company_id');
+          const taskKey = currentCompanyId ? `hr_tasks_${currentCompanyId}` : 'hr_tasks';
+
+          // 🌟 2. 専用キーで読み込み！
+          const tasks = JSON.parse(localStorage.getItem(taskKey) || '[]');
           
           for (const uniqueVal of selectedIds) {
             const [docId, flagName] = uniqueVal.split('__');
@@ -698,7 +780,8 @@ alert('処理中にエラーが発生しました。');
             }
           }
 
-          localStorage.setItem('hr_tasks', JSON.stringify(tasks));
+          // 🌟 3. 専用キーで保存！
+          localStorage.setItem(taskKey, JSON.stringify(tasks));
           alert(`✅ ${selectedIds.length}件のタスクを一括生成し、集中管理へ送りました！`);
 
           ageEventUsers = ageEventUsers.filter(u => !selectedIds.includes(`${u.docId}__${u.flagName}`));
@@ -719,7 +802,14 @@ alert('処理中にエラーが発生しました。');
 }
 
 async function fetchAgeEventEmployees() {
-  const usersSnap = await getDocs(collection(db, 'users'));
+  // 🌟 4. 会社IDを取得！
+  const currentCompanyId = localStorage.getItem('current_company_id');
+  if (!currentCompanyId) return []; // 会社情報がなければ空配列を返す
+
+  // 🌟 5. 【超重要】従業員を検索する時は必ず「自分の会社」だけで絞り込む！！！
+  const q = query(collection(db, 'users'), where("companyId", "==", currentCompanyId));
+  const usersSnap = await getDocs(q);
+  
   const targets: any[] = [];
   const today = new Date();
   const currentYear = today.getFullYear();

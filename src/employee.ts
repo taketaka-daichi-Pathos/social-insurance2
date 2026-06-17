@@ -406,7 +406,6 @@ infoForm?.addEventListener('submit', async (e) => {
       currentAddress: getValue('current-address'),
       registeredAddress: (document.getElementById('address-same-check') as HTMLInputElement)?.checked ? getValue('current-address') : getValue('registered-address'),
       hasPreviousIncome: radioIncomeYes?.checked || false,
-      
       myNumber: getValue('mynumber'),
       myNumberImageUrl: myNumberImageUrl,
       pensionNumber: getValue('pension-num'),
@@ -443,36 +442,40 @@ infoForm?.addEventListener('submit', async (e) => {
         remandReason: ""    // ✨ 次のために理由も空っぽにリセットしておく
     });
 
-    // 🌟 --- ここから追加：扶養追加があればライフイベントに申請を自動生成 ---
-    if (radioDepYes?.checked && dependentData) {
-      try {
-          await addDoc(collection(db, "life_events"), {
-              // 1. IDと名前（TypeScriptエラーを回避するため、安全な取り方に変更）
-              userId: currentUserId,
-              userEmail: currentUserEmail, // 過去データに合わせて念のため追加
-              employeeId: (employeeData as any).employeeId || currentUserId.substring(0, 6),
-              empName: `${employeeData.lastNameKanji} ${employeeData.firstNameKanji}`,
-              
-              // 🌟 修正1: ライフイベントタブの正解は「未承認」でした！
-              status: "未承認", 
-              
-              // 🌟 修正2: 過去の成功データに合わせて "other" に統一
-              eventType: "other", 
-              event: "family_add", // 承認タスク生成用（残しておきます）
-              
-              eventDate: dependentData.startDate || new Date().toISOString().split('T')[0],
-              eventTitle: "👔 家族・扶養追加の申請",
-              dependent: dependentData,
-              
-              // 🌟 修正3: 【超重要】文字列(toISOString)ではなく、純粋な Date オブジェクトで保存する！
-              createdAt: new Date()
-          });
-          console.log("✅ 扶養追加のライフイベント申請を自動発行しました！");
-      } catch (error) {
-          console.error("ライフイベント連携エラー:", error);
-      }
-  }
-  // 🌟 --- ここまで ---
+   // 🌟 --- ここから追加：扶養追加があればライフイベントに申請を自動生成 ---
+  if (radioDepYes?.checked && dependentData) {
+    try {
+        // 🌟 1. 従業員自身が所属している会社IDをローカルストレージ（またはマスタ）から取得！
+        const myCompanyId = localStorage.getItem('current_company_id');
+        if (!myCompanyId) {
+            console.error("会社IDが不明なため、ライフイベントの自動申請をスキップしました。");
+            return;
+        }
+
+        await addDoc(collection(db, "life_events"), {
+            // 🌟 2. 【超重要】この申請が「どの会社のデータか」を絶対に刻印する！！！
+            companyId: myCompanyId, 
+            
+            userId: currentUserId,
+            userEmail: currentUserEmail, 
+            employeeId: (employeeData as any).employeeId || currentUserId.substring(0, 6),
+            empName: `${employeeData.lastNameKanji} ${employeeData.firstNameKanji}`,
+            
+            status: "未承認", 
+            eventType: "other", 
+            event: "family_add", 
+            
+            eventDate: dependentData.startDate || new Date().toISOString().split('T')[0],
+            eventTitle: "👔 家族・扶養追加の申請",
+            dependent: dependentData,
+            
+            createdAt: new Date()
+        });
+        console.log("✅ 会社ID刻印済みのライフイベント申請を自動発行しました！");
+    } catch (error) {
+        console.error("ライフイベント連携エラー:", error);
+    }
+}
 
 
 
@@ -505,21 +508,26 @@ infoForm?.addEventListener('submit', async (e) => {
     }
   }
 });
+// =========================================================
+// 🌟 最強の半角数字バリデーション起動エンジン
+// =========================================================
+export function setupStrictNumberValidation() {
+  // 💡 .strict-number が付いている入力欄をすべて探して監視をつける
+  document.querySelectorAll('.strict-number').forEach((input) => {
+      // ※すでにイベントがついている場合の重複防止策（1回だけつける）
+      if (input.getAttribute('data-strict-bound') === 'true') return;
+      input.setAttribute('data-strict-bound', 'true');
 
-// ==========================================
-// 🛡️ 最強の半角数字バリデーション（全角→半角自動変換）
-// ==========================================
-document.querySelectorAll('.strict-number').forEach(input => {
-  input.addEventListener('input', (e) => {
-      const target = e.target as HTMLInputElement;
-      
-      // 1. 全角数字（０-９）を半角数字（0-9）に変換
-      let val = target.value.replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
-      
-      // 2. 数字（0-9）以外をすべて空文字に置換（ハイフンや文字を強制消去）
-      val = val.replace(/\D/g, '');
-      
-      // 3. 画面に反映
-      target.value = val;
+      input.addEventListener('input', (e) => {
+          const target = e.target as HTMLInputElement;
+          let val = target.value;
+
+          // 1. 全角数字を半角に変換
+          val = val.replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+          // 2. 数字以外をすべて強制消去
+          val = val.replace(/\D/g, '');
+          // 3. 画面に反映
+          target.value = val;
+      });
   });
-});
+}

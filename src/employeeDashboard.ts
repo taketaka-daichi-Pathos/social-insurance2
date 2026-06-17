@@ -294,17 +294,35 @@ async function loadMyNotifications(fullName: string) {
 // または画面初期化関数（例: initDashboard などの名前になっているかと思います）の中に組み込みます。
 
 // 例①：Firebase Authのログイン監視の中で呼び出す場合
+// ==========================================
+// 🚀 3. マイページを起動するメイン処理（フルガード版）
+// ==========================================
 onAuthStateChanged(auth, async (user) => {
   if (user) {
-      const userEmail = user.email || ""; // ログインした人のメールアドレス
-      const userFullName = user.displayName || "従業員氏名"; // ログインした人の名前
+      const userEmail = user.email || ""; 
+      const currentUserId = user.uid;
 
-      // 🟢 既存の通知を読み込む（すでにある処理）
-      await loadMyNotifications(userFullName);
+      // 🌟 【修正】AuthのdisplayNameに頼らず、DBから「確実な氏名」を取得する！
+      let realFullName = "名称未設定";
+      try {
+          const userSnap = await getDoc(doc(db, 'users', currentUserId));
+          if (userSnap.exists()) {
+              const userData = userSnap.data();
+              realFullName = `${userData.lastNameKanji || ''} ${userData.firstNameKanji || ''}`.trim();
+          }
+      } catch (error) {
+          console.error("ユーザー情報の取得に失敗:", error);
+      }
 
-      // 🔥【ここに追記！】差し戻し監視関数を「実行」する！！
-      // これを書くことで、VS Codeの「読み取られることはありません」のエラーが消え去ります！
-      listenToRemandStatus(userEmail);
+      console.log(`🔔 通知読み込み開始: ターゲット名 [${realFullName}]`);
+
+      // 🟢 既存の通知を読み込む（取得した確実な名前を渡す！）
+      await loadMyNotifications(realFullName);
+
+      // 🔥 差し戻し監視関数を実行
+      if (typeof listenToRemandStatus === "function") {
+          listenToRemandStatus(userEmail);
+      }
   }
 });
 
@@ -464,13 +482,12 @@ btnCloseChange?.addEventListener('click', () => {
 });
 
 // 🌟 申請ボタンを押したときの処理（Firestoreへ送信）
-// 🌟 申請ボタンを押したときの処理（Firestoreへ送信：完全版）
+// 🌟 申請ボタンを押したときの処理（Firestoreへ送信：会社ID連動の完全版！）
 btnSubmitChange?.addEventListener('click', async () => {
     const changeDate = (document.getElementById('input-change-date') as HTMLInputElement).value;
     const newLastName = (document.getElementById('input-new-lastname') as HTMLInputElement).value;
     const newFirstName = (document.getElementById('input-new-firstname') as HTMLInputElement).value;
     
-    // 🌟 追加した「郵便番号」「通勤経路」「定期代」のデータを取得！
     const newZip = (document.getElementById('input-new-zip') as HTMLInputElement).value;
     const newAddress = (document.getElementById('input-new-address') as HTMLInputElement).value;
     const newRoute = (document.getElementById('input-new-route') as HTMLInputElement).value;
@@ -481,41 +498,77 @@ btnSubmitChange?.addEventListener('click', async () => {
       return;
     }
     
-    // 実務的バリデーション：住所を入れたなら郵便番号も必須！
     if (newAddress && !newZip) {
       alert("新しい住所の「郵便番号」も入力してください。");
       return;
     }
   
     try {
-        // 🌟 ステップ2で保存した、本物のログインユーザーIDを使う！
         const currentEmployeeId = loggedInEmployeeId; 
-        
-        // 万が一IDが取れていなかった場合のエラー回避
         if (!currentEmployeeId) {
           alert("ユーザー情報が取得できません。ページをリロードしてください。");
           return;
-        } // ※テスト用。後で実際のログインユーザーIDにします
+        }
+
+        // ==========================================
+        // 🌟 【超重要】ログイン従業員自身のデータから「companyId」と「氏名」を自動検知！
+        // ==========================================
+        let myCompanyId = "";
+        let currentEmpName = "名称未設定";
+
+        // users コレクションから、自分の employeeId（またはid）に一致するドキュメントを探す
+        const userQuery = query(collection(db, "users"), where("employeeId", "==", String(currentEmployeeId)));
+        const userSnap = await getDocs(userQuery);
+        
+        if (!userSnap.empty) {
+          // 🌟 TypeScriptの厳しい「配列チェック」を回避するため、一旦変数に入れます！
+          const firstDoc = userSnap.docs[0];
+          
+          if (firstDoc) {
+              const myData = firstDoc.data();
+              myCompanyId = myData?.companyId || "";
+              currentEmpName = `${myData?.lastNameKanji || ''} ${myData?.firstNameKanji || ''}`.trim();
+          }
+      } else {
+          // もし employeeId で見つからなかった場合のセーフティ
+          const userDocSnap = await getDoc(doc(db, "users", String(currentEmployeeId)));
+          if (userDocSnap.exists()) {
+              const myData = userDocSnap.data();
+              myCompanyId = myData?.companyId || "";
+              currentEmpName = `${myData?.lastNameKanji || ''} ${myData?.firstNameKanji || ''}`.trim();
+          }
+      }
+
+        if (!myCompanyId) {
+            alert("⚠️ 所属している会社IDが判別できません。管理者にお問い合わせください。");
+            return;
+        }
       
-      // Firestoreの「changeRequests」コレクションに保存
+      // ==========================================
+      // 🌟 コレクションへの保存（companyId と氏名・IDを完全紐付け！）
+      // ==========================================
+      // 💡 労務担当側の「受信アンテナ」が 'changeRequests' ではない名前（例: 'employee_requests'）に
+      // なっている場合は、下のコレクション名を労務側の読み込み名と一致させてください！
       await addDoc(collection(db, "changeRequests"), {
-        employeeId: currentEmployeeId,
+        companyId: myCompanyId,        // 🔥 労務担当が自社データとして拾うための必須キー！
+        employeeId: currentEmployeeId,  // 従業員ID
+        empName: currentEmpName,       // 従業員の漢字氏名（労務の画面の左リストに出す用）
         type: "住所・氏名変更",
         changeDate: changeDate,
         newLastName: newLastName,
         newFirstName: newFirstName,
-        newZip: newZip,           // 🌟 追加
+        newZip: newZip,           
         newAddress: newAddress,
-        newRoute: newRoute,       // 🌟 追加
-        newPass: newPass ? Number(newPass) : 0, // 🌟 追加（計算しやすいように数値にしておく）
-        status: "pending", // 労務の承認待ち
+        newRoute: newRoute,       
+        newPass: newPass ? Number(newPass) : 0, 
+        status: "pending",             // 労務の「未承認」リストに表示させるためのフラグ
         createdAt: new Date().toISOString()
       });
   
-      alert("申請が完了しました！労務担当者の確認をお待ちください。");
+      alert("🎉 申請が完了しました！労務担当者の確認をお待ちください。");
       if (modalChange) modalChange.style.display = 'none';
       
-      // 入力欄をリセットする
+      // 入力欄をリセット
       (document.getElementById('input-change-date') as HTMLInputElement).value = '';
       (document.getElementById('input-new-lastname') as HTMLInputElement).value = '';
       (document.getElementById('input-new-firstname') as HTMLInputElement).value = '';
@@ -528,8 +581,7 @@ btnSubmitChange?.addEventListener('click', async () => {
       console.error("申請エラー:", error);
       alert("申請に失敗しました。");
     }
-  });
-
+});
 
 
 // ==========================================
@@ -646,370 +698,484 @@ export function initLifeEventForms() {
         } else if (removeDocNav) {
           removeDocNav.style.display = 'none';
         }
-      });
+      })
 
 
-    // ④ 🚀 送信ボタンの処理（Firestoreへ保存）
-    btnSubmitFamily?.addEventListener('click', async () => {
-      const user = auth.currentUser;
-      if (!user) {
-        alert("ログイン情報が取得できません。再ログインしてください。");
-        return;
-      }
+
+
+ // ④ 🚀 送信ボタンの処理（Firestoreへ保存＆会社ID連動・完全版！）
+ btnSubmitFamily?.addEventListener('click', async () => {
+
+
+
   
-      const selectedType = (document.querySelector('input[name="family-event-type"]:checked') as HTMLInputElement)?.value;
+  const user = auth.currentUser;
+  if (!user) {
+    alert("ログイン情報が取得できません。再ログインしてください。");
+    return;
+  }
+
+  const selectedType = (document.querySelector('input[name="family-event-type"]:checked') as HTMLInputElement)?.value;
+  if (!selectedType) {
+    alert("申請するライフイベントの種類を選択してください。");
+    return;
+  }
+
+
+// 👇👇👇 🌟 726行目あたりにここから上書き・追加！ 🌟 👇👇👇
+    // ==========================================
+    // 🛡️ 追加：必須項目の入力チェック（最強の防波堤）
+    // ==========================================
+    // ▼ ① 出産・育休の場合（確定した3つのIDでチェック！）
+    if (selectedType === 'birth') {
+      const birthDate = (document.getElementById('input-birth-date') as HTMLInputElement)?.value;
+      const leaveStart = (document.getElementById('input-leave-start') as HTMLInputElement)?.value;
+      const leaveEnd = (document.getElementById('input-leave-end') as HTMLInputElement)?.value;
+
+      if (!birthDate || !leaveStart || !leaveEnd) {
+          alert("⚠️【エラー】\n「出産予定日」「休業開始日」「休業終了予定日」はすべて入力必須です！");
+          return; // 🛑 ここで処理をストップして送信させない！
+      }
+  } 
+  // ▼ ② その他のライフイベントの場合（結婚、扶養から外す など）
+  else {
+      // 💡 共通の発生日入力欄がある場合は、そのID（例: input-event-date など）に合わせてください
+      const eventDate = (document.getElementById('input-event-date') as HTMLInputElement)?.value;
       
-      let eventData: any = {
-        userId: user.uid,
-        userEmail: user.email,
-        employeeId: loggedInEmployeeId || '',
-        eventType: selectedType,
-        status: '未承認',
-        createdAt: serverTimestamp()
+      if (eventDate === "") {
+          alert("⚠️【エラー】\n発生日を入力してください！");
+          return; // 🛑 ストップ！
+      }
+  }
+  // 👆👆👆 🌟 追加ここまで 🌟 👆👆👆
+
+
+
+
+  try {
+    btnSubmitFamily.innerText = '⏳ 送信中...';
+    btnSubmitFamily.disabled = true;
+
+    // ==========================================
+    // 🌟 1. ログイン従業員から「companyId」と「氏名」を自動検知！
+    // ==========================================
+    let myCompanyId = "";
+    let currentEmpName = "名称未設定";
+    const currentEmployeeId = loggedInEmployeeId || ''; 
+
+    const userQuery = query(collection(db, "users"), where("employeeId", "==", String(currentEmployeeId)));
+    const userSnap = await getDocs(userQuery);
+    
+    if (!userSnap.empty) {
+      // 🌟 古いコードは消して、この形「だけ」にします！
+      const firstDoc = userSnap.docs[0];
+      
+      if (firstDoc) {
+          const myData = firstDoc.data();
+          myCompanyId = myData?.companyId || "";
+          currentEmpName = `${myData?.lastNameKanji || ''} ${myData?.firstNameKanji || ''}`.trim();
+      }
+  } else {
+      // もし employeeId で見つからなかった場合のセーフティ
+      const userDocSnap = await getDoc(doc(db, "users", String(currentEmployeeId)));
+      if (userDocSnap.exists()) {
+          const myData = userDocSnap.data();
+          myCompanyId = myData?.companyId || "";
+          currentEmpName = `${myData?.lastNameKanji || ''} ${myData?.firstNameKanji || ''}`.trim();
+      }
+  }
+
+    // ==========================================
+    // 🌟 2. ベースとなる申請データの組み立て
+    // ==========================================
+    let eventData: any = {
+      companyId: myCompanyId,         // 🔥 労務担当のアンテナに引っ掛けるための必須キー！
+      employeeId: currentEmployeeId,
+      empName: currentEmpName,        // 🔥 労務画面のリストに名前を出す用
+      userId: user.uid,
+      userEmail: user.email,
+      eventType: selectedType,
+      type: "ライフイベント",           // 住所変更と見分けるタグ
+      status: 'pending',              // 🔥 労務の未承認リストに出すため 'pending' に統一！
+      createdAt: serverTimestamp()
+    };
+
+    // ==========================================
+    // 🌟 3. 竹高さんの神ロジック！各イベントごとのデータ回収
+    // ==========================================
+    // 👶 出産の場合
+    if (selectedType === 'birth') {
+      const birthDate = (document.getElementById('input-birth-date') as HTMLInputElement)?.value;
+      if (!birthDate) throw new Error("出産予定日未入力"); // catchブロックへ飛ばす
+
+      const startDate = (document.getElementById('input-leave-start') as HTMLInputElement)?.value;
+      const endDate = (document.getElementById('input-leave-end') as HTMLInputElement)?.value;
+
+      const checks = document.querySelectorAll('.birth-support-check:checked');
+      const options = Array.from(checks).map((cb: any) => cb.value);
+
+      const needsDates = options.includes('sankyu_exemption') || options.includes('exemption');
+      if (needsDates && (!startDate || !endDate)) {
+        alert("⚠️ 社会保険料の免除を申請する場合は、「休業開始日」と「休業終了予定日」を必ず入力してください。");
+        throw new Error("免除用の日付未入力");
+      }
+
+      eventData.eventTitle = '👶 出産・育休の申請';
+      eventData.eventDate = birthDate; 
+      eventData.supportOptions = options;
+      eventData.startDate = startDate || "";
+      eventData.endDate = endDate || "";
+    }
+    // 🔙 復職の場合
+    else if (selectedType === 'reinstatement') {
+      const returnDate = (document.getElementById('input-reinstatement-date') as HTMLInputElement)?.value;
+      if (!returnDate) throw new Error("復職予定日未入力");
+
+      eventData.eventTitle = '🔙 復職（育休の終了）の申請';
+      eventData.eventDate = returnDate;
+      eventData.childName = (document.getElementById('input-child-name') as HTMLInputElement)?.value || '';
+      eventData.childBirthDate = (document.getElementById('input-child-dob') as HTMLInputElement)?.value || '';
+    }
+    // 💍 結婚 または 🏫 その他の家族追加の場合
+    else if (selectedType === 'marriage' || selectedType === 'other') {
+      eventData.eventTitle = selectedType === 'marriage' ? '💍 結婚・配偶者扶養の申請' : '🏫 家族・扶養追加の申請';
+      
+      eventData.dependent = {
+        lastNameKanji: (document.getElementById('dep-last-name-kanji') as HTMLInputElement)?.value || '',
+        firstNameKanji: (document.getElementById('dep-first-name-kanji') as HTMLInputElement)?.value || '',
+        lastNameKana: (document.getElementById('dep-last-name-kana') as HTMLInputElement)?.value || '',
+        firstNameKana: (document.getElementById('dep-first-name-kana') as HTMLInputElement)?.value || '',
+        birthDate: (document.getElementById('dep-birth') as HTMLInputElement)?.value || '',
+        relation: (document.getElementById('dep-relation') as HTMLSelectElement)?.value || '',
+        income: (document.getElementById('dep-income') as HTMLInputElement)?.value || '',
+        livingStatus: (document.getElementById('dep-living') as HTMLSelectElement)?.value || ''
       };
 
-
-      // 👶 出産の場合
-      if (selectedType === 'birth') {
-        const birthDate = (document.getElementById('input-birth-date') as HTMLInputElement)?.value;
-        if (!birthDate) return alert("⚠️ 出産予定日を入力してください。");
-
-        // 🌟【新規追加】画面から「休業開始日」と「終了予定日」の入力を読み取る
-        const startDate = (document.getElementById('input-leave-start') as HTMLInputElement)?.value;
-        const endDate = (document.getElementById('input-leave-end') as HTMLInputElement)?.value;
-
-        // 画面でチェックされているサポートオプションを取得
-        const checks = document.querySelectorAll('.birth-support-check:checked');
-        const options = Array.from(checks).map((cb: any) => cb.value);
-
-        // 🚨【安全装置】産休免除、または育休免除にチェックがあるのに、日付が未入力ならガードする
-        const needsDates = options.includes('sankyu_exemption') || options.includes('exemption');
-        if (needsDates && (!startDate || !endDate)) {
-          return alert("⚠️ 社会保険料の免除を申請する場合は、「休業開始日」と「休業終了予定日」を必ず入力してください。");
-        }
-
-        eventData.eventTitle = '👶 出産・育休の申請';
-        eventData.eventDate = birthDate; // 出産予定日
-        eventData.supportOptions = options;
-
-        // 🌟【新規追加】Firestoreに送信するデータオブジェクトに、2つの日付をドッキング！
-        eventData.startDate = startDate || "";
-        eventData.endDate = endDate || "";
+      if (!eventData.dependent.lastNameKanji || !eventData.dependent.firstNameKanji) {
+        alert("⚠️ 追加するご家族の氏名を入力してください。");
+        throw new Error("家族氏名未入力");
       }
-      // 🔙 復職の場合
-      else if (selectedType === 'reinstatement') {
-        const returnDate = (document.getElementById('input-reinstatement-date') as HTMLInputElement)?.value;
-        if (!returnDate) return alert("⚠️ 復職予定日を入力してください。");
-        eventData.eventTitle = '🔙 復職（育休の終了）の申請';
-        
-        const childName = (document.getElementById('input-child-name') as HTMLInputElement)?.value;
-        const childDob = (document.getElementById('input-child-dob') as HTMLInputElement)?.value;
-        eventData.eventDate = returnDate;
-        eventData.childName = childName || '';
-        eventData.childBirthDate = childDob || '';
+    }
+    // 👋 扶養から外す（喪失）場合
+    else if (selectedType === 'remove_family') {
+      const empName = (document.getElementById('remove-dep-select') as HTMLSelectElement)?.value;
+      const reason = (document.getElementById('remove-dep-reason') as HTMLSelectElement)?.value;
+      const removeDate = (document.getElementById('remove-dep-date') as HTMLInputElement)?.value;
+      const cardReturn = (document.getElementById('remove-dep-card-return') as HTMLSelectElement)?.value;
+
+      if (!empName || !reason || !removeDate || !cardReturn) {
+        alert("⚠️ 対象者、理由、喪失日、保険証の状況をすべて入力してください。");
+        throw new Error("喪失情報未入力");
       }
-      // 💍 結婚 または 🏫 その他の家族追加の場合（🌟 新規追加）
-      else if (selectedType === 'marriage' || selectedType === 'other') {
-        eventData.eventTitle = selectedType === 'marriage' ? '💍 結婚・配偶者扶養の申請' : '🏫 家族・扶養追加の申請';
-        
-        // 入力された家族情報を取得して eventData にまとめる
-        eventData.dependent = {
-          lastNameKanji: (document.getElementById('dep-last-name-kanji') as HTMLInputElement)?.value || '',
-          firstNameKanji: (document.getElementById('dep-first-name-kanji') as HTMLInputElement)?.value || '',
-          lastNameKana: (document.getElementById('dep-last-name-kana') as HTMLInputElement)?.value || '',
-          firstNameKana: (document.getElementById('dep-first-name-kana') as HTMLInputElement)?.value || '',
-          birthDate: (document.getElementById('dep-birth') as HTMLInputElement)?.value || '',
-          relation: (document.getElementById('dep-relation') as HTMLSelectElement)?.value || '',
-          income: (document.getElementById('dep-income') as HTMLInputElement)?.value || '',
-          livingStatus: (document.getElementById('dep-living') as HTMLSelectElement)?.value || ''
-        };
 
-        // 必須チェック（名前だけは入れてもらう）
-        if (!eventData.dependent.lastNameKanji || !eventData.dependent.firstNameKanji) {
-          return alert("⚠️ 追加するご家族の氏名を入力してください。");
-        }
-      }
-  
-        // 🌟🌟 扶養から外す（喪失）場合のデータ回収 🌟🌟
-        else if (selectedType === 'remove_family') {
-            const empName = (document.getElementById('remove-dep-select') as HTMLSelectElement)?.value;
-            const reason = (document.getElementById('remove-dep-reason') as HTMLSelectElement)?.value;
-            const removeDate = (document.getElementById('remove-dep-date') as HTMLInputElement)?.value;
-            
-            // 👇 ここを追加！
-            const cardReturn = (document.getElementById('remove-dep-card-return') as HTMLSelectElement)?.value;
+      eventData.eventTitle = '👋 扶養家族の削除（資格喪失）申請';
+      eventData.eventDate = removeDate; 
+      eventData.removeReason = reason;
+      eventData.targetFamilyName = empName;
+      eventData.cardReturnStatus = cardReturn; 
+    }
 
-            if (!empName || !reason || !removeDate || !cardReturn) {
-            return alert("⚠️ 対象者、理由、喪失日、保険証の状況をすべて入力してください。");
-            }
-
-            eventData.eventTitle = '👋 扶養家族の削除（資格喪失）申請';
-            eventData.eventDate = removeDate; // 喪失日
-            eventData.removeReason = reason;
-            eventData.targetFamilyName = empName;
-            eventData.cardReturnStatus = cardReturn; // 👈 労務ダッシュボードに送る
-        }
-
-
-      try {
-        btnSubmitFamily.innerText = '⏳ 送信中...';
-        btnSubmitFamily.disabled = true;
-
-        // 🌟🌟 1. 添付ファイルのアップロード処理 🌟🌟
-        const attachedFiles: { docName: string; fileUrl: string }[] = [];
-        // 画面上に表示されている（hiddenになっていない）ファイル入力欄をすべて取得
-        const fileInputs = document.querySelectorAll('.dep-file-input') as NodeListOf<HTMLInputElement>;
-        
-        for (const input of Array.from(fileInputs)) {
-            const docNavArea = input.closest('#doc-nav-area, #remove-doc-nav-area') as HTMLElement | null;
-            if (docNavArea && (docNavArea.style.display === 'block' || docNavArea.getAttribute('style')?.includes('display: block'))) {
-              if (input.files && input.files[0]) {
-                const url = await uploadFileToStorage(input.files[0], `life_events/${user.uid}`);
-                attachedFiles.push({ docName: input.getAttribute('data-doc-name') || '添付書類', fileUrl: url });
-              }
-            }
+    // ==========================================
+    // 🌟 4. 添付ファイルのアップロード処理
+    // ==========================================
+    const attachedFiles: { docName: string; fileUrl: string }[] = [];
+    const fileInputs = document.querySelectorAll('.dep-file-input') as NodeListOf<HTMLInputElement>;
+    
+    for (const input of Array.from(fileInputs)) {
+        const docNavArea = input.closest('#doc-nav-area, #remove-doc-nav-area') as HTMLElement | null;
+        if (docNavArea && (docNavArea.style.display === 'block' || docNavArea.getAttribute('style')?.includes('display: block'))) {
+          if (input.files && input.files[0]) {
+            // 💡 会社IDごとのフォルダに整理して保存
+            const url = await uploadFileToStorage(input.files[0], `life_events/${myCompanyId}/${currentEmployeeId}`);
+            attachedFiles.push({ docName: input.getAttribute('data-doc-name') || '添付書類', fileUrl: url });
           }
-
-        // アップロードしたファイルのURLリストをイベントデータに追加
-        if (attachedFiles.length > 0) {
-          eventData.attachedFiles = attachedFiles;
         }
+    }
 
-        // 🌟🌟 2. Firestoreにすべてまとめて保存！ 🌟🌟
-        await addDoc(collection(db, 'life_events'), eventData);
-        alert('🎉 労務への申請が完了しました！');
-        closeModal();
-        btnSubmitFamily.innerText = '🚀 この内容で労務に申請する';
-        btnSubmitFamily.disabled = false;
-  
-      } catch (error) {
-        console.error(error);
-        alert("❌ 申請に失敗しました。");
-        btnSubmitFamily.disabled = false;
-      }
-    });
+    if (attachedFiles.length > 0) {
+      eventData.attachedFiles = attachedFiles;
+    }
+
+    // ==========================================
+    // 🌟 5. 労務担当への送信（統一コレクションへ！）
+    // ==========================================
+    await addDoc(collection(db, 'changeRequests'), eventData);
+    
+    alert('🎉 労務への申請が完了しました！');
+    closeModal();
+
+  } catch (error: any) {
+    if (error.message) console.log("入力チェックによる中断:", error.message);
+    else console.error("申請エラー:", error);
+  } finally {
+    // ボタンの状態を元に戻す
+    btnSubmitFamily.innerText = '🚀 この内容で労務に申請する';
+    btnSubmitFamily.disabled = false;
+  }
+});
 }
   
-
 // ==========================================
-// 🌟 💳 保険証再発行モーダルの制御ロジック
+// 🌟 💳 保険証再発行モーダルの制御ロジック（完全データ連携版）
 // ==========================================
 export function initReissueInsuranceForm() {
-    // 1. メニューのボタンを押したらモーダルを開く
-    const btnApplyLost = document.getElementById('btn-apply-lost');
-    const modalReissue = document.getElementById('modal-reissue-insurance');
+  const btnApplyLost = document.getElementById('btn-apply-lost');
+  const modalReissue = document.getElementById('modal-reissue-insurance');
 
-    if (btnApplyLost && modalReissue) {
-        btnApplyLost.addEventListener('click', () => {
-            modalReissue.style.display = 'flex';
-        });
-    }
+  if (btnApplyLost && modalReissue) {
+      btnApplyLost.addEventListener('click', () => {
+          modalReissue.style.display = 'flex';
+      });
+  }
 
-    // 2. 申請理由の選択肢に合わせて、下の注意書きを切り替えるギミック
-    const reissueReason = document.getElementById('reissue-reason') as HTMLSelectElement;
-    const policeSec = document.getElementById('police-report-section');
-    const brokenSec = document.getElementById('broken-card-section');
+  const reissueReason = document.getElementById('reissue-reason') as HTMLSelectElement;
+  const policeSec = document.getElementById('police-report-section');
+  const brokenSec = document.getElementById('broken-card-section');
 
-    if (reissueReason && policeSec && brokenSec) {
-        reissueReason.addEventListener('change', (e) => {
-            const val = (e.target as HTMLSelectElement).value;
-            
-            if (val === '紛失' || val === '盗難') {
-                policeSec.style.display = 'block';
-                brokenSec.style.display = 'none';
-            } else if (val === 'き損') {
-                policeSec.style.display = 'none';
-                brokenSec.style.display = 'block';
-            } else {
-                policeSec.style.display = 'none';
-                brokenSec.style.display = 'none';
-            }
-        });
-    }
+  if (reissueReason && policeSec && brokenSec) {
+      reissueReason.addEventListener('change', (e) => {
+          const val = (e.target as HTMLSelectElement).value;
+          
+          if (val === '紛失' || val === '盗難') {
+              policeSec.style.display = 'block';
+              brokenSec.style.display = 'none';
+          } else if (val === 'き損') {
+              policeSec.style.display = 'none';
+              brokenSec.style.display = 'block';
+          } else {
+              policeSec.style.display = 'none';
+              brokenSec.style.display = 'none';
+          }
+      });
+  }
 
-    // 3. 🌟 フォーム送信時の処理（Firebaseへ保存）
-    const formReissue = document.getElementById('form-reissue-insurance') as HTMLFormElement;
-    
-    if (formReissue) {
-        formReissue.addEventListener('submit', async (e) => {
-            e.preventDefault(); // 画面の再読み込みを防ぐ
+  const formReissue = document.getElementById('form-reissue-insurance') as HTMLFormElement;
+  
+  if (formReissue) {
+      formReissue.addEventListener('submit', async (e) => {
+          e.preventDefault(); 
 
-            // 🌟 修正：FirebaseのAuth機能から確実に現在のユーザーを取得する
-            if (!auth.currentUser) {
-                alert("ログイン情報が取得できません。もう一度ログインしてください。");
-                return;
-            }
+          if (!auth.currentUser) {
+              alert("ログイン情報が取得できません。もう一度ログインしてください。");
+              return;
+          }
 
-            const currentUserId = auth.currentUser.uid;
-            
-            // usersコレクションから本人の最新情報を取得
-            const userSnap = await getDoc(doc(db, 'users', currentUserId));
-            const userData = userSnap.exists() ? userSnap.data() : {};
-            
-            const employeeId = userData.employeeId || currentUserId.substring(0, 6);
-            const empName = `${userData.lastNameKanji || ''} ${userData.firstNameKanji || ''}`.trim() || '氏名不明';
+          const currentUserId = auth.currentUser.uid;
+          
+          try {
+              const userSnap = await getDoc(doc(db, 'users', currentUserId));
+              const userData = userSnap.exists() ? userSnap.data() : {};
+              
+              const employeeId = userData.employeeId || currentUserId.substring(0, 6);
+              const empName = `${userData.lastNameKanji || ''} ${userData.firstNameKanji || ''}`.trim() || '氏名不明';
+              
+              // 🌟 会社IDを確実に入手！
+              const myCompanyId = userData.companyId || "";
+              if (!myCompanyId) {
+                  alert("⚠️ 会社IDが判別できないため、申請に失敗しました。");
+                  return;
+              }
 
-            // フォームの入力値を取得
-            const reason = (document.getElementById('reissue-reason') as HTMLSelectElement).value;
-            const date = (document.getElementById('reissue-date') as HTMLInputElement).value;
-            const police = (document.getElementById('reissue-police') as HTMLSelectElement).value;
-            const memo = (document.getElementById('reissue-memo') as HTMLTextAreaElement).value;
+              const reason = (document.getElementById('reissue-reason') as HTMLSelectElement).value;
+              const date = (document.getElementById('reissue-date') as HTMLInputElement).value;
+              const police = (document.getElementById('reissue-police') as HTMLSelectElement).value;
+              const memo = (document.getElementById('reissue-memo') as HTMLTextAreaElement).value;
 
-            try {
-                // Firebaseに「未承認」で追加！
-                // Firebaseに「未承認」で追加！
-                await addDoc(collection(db, "life_events"), {
-                    userId: currentUserId,         // 🌟 authから取ったID
-                    employeeId: employeeId,        // 🌟 DBから取った社員番号
-                    empName: empName,              // 🌟 DBから取った氏名
-                    status: "未承認",
-                    eventType: "other", 
-                    event: "insurance_reissue",
-                    eventDate: date,
-                    eventTitle: "💳 保険証の再発行申請",
-                    dependent: {
-                        reason: reason,
-                        policeReport: reason === '紛失' || reason === '盗難' ? police : "不要",
-                        memo: memo
-                    },
-                    createdAt: new Date()
-                });
+              // 🌟 修正：コレクションを「changeRequests」にし、companyIdを同梱、statusを'pending'に統一！
+              await addDoc(collection(db, "changeRequests"), {
+                  companyId: myCompanyId,        // 🔥 必須キー！
+                  userId: currentUserId,         
+                  employeeId: employeeId,        
+                  empName: empName,              
+                  status: "pending",             // 🔥 'pending' に統一！
+                  eventType: "other", 
+                  event: "insurance_reissue",
+                  type: "保険証再発行",           // 住所変更やライフイベントと見分けるタグ
+                  eventDate: date,
+                  eventTitle: "💳 保険証の再発行申請",
+                  dependent: {
+                      reason: reason,
+                      policeReport: reason === '紛失' || reason === '盗難' ? police : "不要",
+                      memo: memo
+                  },
+                  createdAt: serverTimestamp()   // サーバー日付に統一
+              });
 
-                alert("💳 保険証の再発行申請を送信しました！人事の確認をお待ちください。");
-                
-                // モーダルを閉じてフォームをリセット
-                if (modalReissue) modalReissue.style.display = 'none';
-                formReissue.reset();
-                if (policeSec) policeSec.style.display = 'none';
-                if (brokenSec) brokenSec.style.display = 'none';
+              alert("💳 保険証の再発行申請を送信しました！人事の確認をお待ちください。");
+              
+              if (modalReissue) modalReissue.style.display = 'none';
+              formReissue.reset();
+              if (policeSec) policeSec.style.display = 'none';
+              if (brokenSec) brokenSec.style.display = 'none';
 
-            } catch (error) {
-                console.error("保険証再発行申請エラー:", error);
-                alert("申請の送信に失敗しました。時間をおいて再度お試しください。");
-            }
-        });
-    }
+          } catch (error) {
+              console.error("保険証再発行申請エラー:", error);
+              alert("申請の送信に失敗しました。");
+          }
+      });
+  }
 }
+
 // ==========================================
-// 🚪 退社ウィザードの制御
+// 🚪 退社ウィザードの制御（完全データ連携版）
 // ==========================================
 export function initResignationForm() {
-    // 1. モーダルを開く処理
-    const btnOpenResign = document.getElementById('btn-open-resignation');
-    const modalResign = document.getElementById('modal-resignation');
+  const btnOpenResign = document.getElementById('btn-open-resignation');
+  const modalResign = document.getElementById('modal-resignation');
 
-    if (btnOpenResign && modalResign) {
-        btnOpenResign.addEventListener('click', (e) => {
-            e.preventDefault();
-            modalResign.style.display = 'flex';
-        });
-    }
+  if (btnOpenResign && modalResign) {
+      btnOpenResign.addEventListener('click', (e) => {
+          e.preventDefault();
+          modalResign.style.display = 'flex';
+      });
+  }
 
-    // 2. 🌟 フォーム送信時の処理（Firebaseへ保存）
-    const formResignation = document.getElementById('form-resignation') as HTMLFormElement;
-    
-    if (formResignation) {
-        formResignation.addEventListener('submit', async (e) => {
-            e.preventDefault(); // 画面の再読み込みを防ぐ
+  const formResignation = document.getElementById('form-resignation') as HTMLFormElement;
+  
+  if (formResignation) {
+      formResignation.addEventListener('submit', async (e) => {
+          e.preventDefault(); 
 
-            // FirebaseのAuth機能から確実に現在のユーザーを取得する
-            if (!auth.currentUser) {
-                alert("ログイン情報が取得できません。もう一度ログインしてください。");
-                return;
-            }
+          if (!auth.currentUser) {
+              alert("ログイン情報が取得できません。もう一度ログインしてください。");
+              return;
+          }
 
-            const currentUserId = auth.currentUser.uid;
-            
-            // usersコレクションから本人の最新情報を取得
-            const userSnap = await getDoc(doc(db, 'users', currentUserId));
-            const userData = userSnap.exists() ? userSnap.data() : {};
-            
-            const employeeId = userData.employeeId || currentUserId.substring(0, 6);
-            const empName = `${userData.lastNameKanji || ''} ${userData.firstNameKanji || ''}`.trim() || '氏名不明';
+          const currentUserId = auth.currentUser.uid;
+          
+          try {
+              const userSnap = await getDoc(doc(db, 'users', currentUserId));
+              const userData = userSnap.exists() ? userSnap.data() : {};
+              
+              const employeeId = userData.employeeId || currentUserId.substring(0, 6);
+              const empName = `${userData.lastNameKanji || ''} ${userData.firstNameKanji || ''}`.trim() || '氏名不明';
+              
+              // 🌟 会社IDを確実に入手！
+              const myCompanyId = userData.companyId || "";
+              if (!myCompanyId) {
+                  alert("⚠️ 会社IDが判別できないため、申請に失敗しました。");
+                  return;
+              }
 
-            // フォームの入力値を取得
-            const resignDate = (document.getElementById('resignation-date') as HTMLInputElement).value;
-            const returnStatus = (document.getElementById('insurance-return-status') as HTMLSelectElement).value;
-            // ラジオボタンの選択値を取得
-            const unemploymentSlip = (document.querySelector('input[name="unemployment-slip"]:checked') as HTMLInputElement)?.value;
+              const resignDate = (document.getElementById('resignation-date') as HTMLInputElement).value;
+              const returnStatus = (document.getElementById('insurance-return-status') as HTMLSelectElement).value;
+              const unemploymentSlip = (document.querySelector('input[name="unemployment-slip"]:checked') as HTMLInputElement)?.value;
 
-            try {
-                // Firebaseに「未承認」で追加！
-                await addDoc(collection(db, "life_events"), {
-                    userId: currentUserId,
-                    employeeId: employeeId,
-                    empName: empName,
-                    status: "未承認",
-                    eventType: "other", 
-                    event: "resignation", // 🌟 退社手続き用の目印
-                    eventDate: resignDate, // 退職日をセット
-                    eventTitle: "🚪 退社手続き（資格喪失）の申請",
-                    dependent: {
-                        resignDate: resignDate,
-                        insuranceReturn: returnStatus,
-                        unemploymentSlip: unemploymentSlip
-                    },
-                    createdAt: new Date()
-                });
+              // 🌟 修正：コレクションを「changeRequests」にし、companyIdを同梱、statusを'pending'に統一！
+              await addDoc(collection(db, "changeRequests"), {
+                  companyId: myCompanyId,        // 🔥 必須キー！
+                  userId: currentUserId,
+                  employeeId: employeeId,
+                  empName: empName,
+                  status: "pending",             // 🔥 'pending' に統一！
+                  eventType: "other", 
+                  event: "resignation", 
+                  type: "退職",                  // 判別タグ
+                  eventDate: resignDate, 
+                  eventTitle: "🚪 退社手続き（資格喪失）の申請",
+                  dependent: {
+                      resignDate: resignDate,
+                      insuranceReturn: returnStatus,
+                      unemploymentSlip: unemploymentSlip || "未選択"
+                  },
+                  createdAt: serverTimestamp()   // サーバー日付に統一
+              });
 
-                alert("🚪 退社手続きの申請を送信しました。人事業務の進行をお待ちください。");
-                
-                // モーダルを閉じてフォームをリセット
-                if (modalResign) modalResign.style.display = 'none';
-                formResignation.reset();
+              alert("🚪 退社手続きの申請を送信しました。人事業務の進行をお待ちください。");
+              
+              if (modalResign) modalResign.style.display = 'none';
+              formResignation.reset();
 
-            } catch (error) {
-                console.error("退社申請エラー:", error);
-                alert("申請の送信に失敗しました。時間をおいて再度お試しください。");
-            }
-        });
-    }
+          } catch (error) {
+              console.error("退社申請エラー:", error);
+              alert("申請の送信に失敗しました。");
+          }
+      });
+  }
 }
-
- // 家族データを取得して表示する関数（エラー解消版）
-// デバッグ版：データが来ない原因を突き止める関数
 // ==========================================
-// 🌟 家族データを取得して表示 ＋ 喪失プルダウンに自動セット
+// 🌟 家族データを取得して表示（オブジェクト・配列両対応の完全版）
+// ==========================================
+// ==========================================
+// 🌟 最終奥義：データベース中身の強制X線出力エンジン
+// ==========================================
+// ==========================================
+// 🌟 家族データを取得して表示（完全決着版！）
 // ==========================================
 async function loadFamilyMembers(userId: string) {
-    try {
-      const userDoc = await getDoc(doc(db, 'users', userId));
-      const userData = userDoc.data();
-      const dependent = userData?.dependent; 
-  
-      const container = document.getElementById('modal-current-family-list');
-      const removeSelect = document.getElementById('remove-dep-select') as HTMLSelectElement;
-      
-      if (container) {
-        if (!dependent) {
-          container.innerHTML = '<p style="color: #666; font-size: 13px; margin: 0;">現在、登録されている扶養家族はいません。</p>';
-          if (removeSelect) removeSelect.innerHTML = '<option value="">対象の扶養家族がいません</option>';
-        } else {
-          // ① モーダル上部に綺麗に表示
-          container.innerHTML = `
-            <div style="padding: 8px; background: #fff; border-radius: 4px; border: 1px solid #ccc; font-size: 13px; display: flex; justify-content: space-between; align-items: center;">
-              <div>
-                <strong>${dependent.lastNameKanji || ''} ${dependent.firstNameKanji || ''}</strong> 
-                <span style="color: #0056b3; font-weight: bold;">(${dependent.relationship || '不明'})</span>
-              </div>
-              <div style="color: #555;">生年月日: ${dependent.birthdate || '未登録'}</div>
-            </div>
-          `;
-  
-          // ② 👋 扶養から外すプルダウン（Select）に動的に名前を流し込む！
-          if (removeSelect) {
-            const fullName = `${dependent.lastNameKanji} ${dependent.firstNameKanji}`;
-            removeSelect.innerHTML = `
-              <option value="">対象者を選択してください</option>
-              <option value="${fullName}" data-relation="${dependent.relationship}">${fullName} (${dependent.relationship})</option>
-            `;
-          }
-        }
-      }
-    } catch (error) {
-      console.error("家族データの取得に失敗しました:", error);
+  try {
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const userData = userDoc.data();
+    
+    const container = document.getElementById('modal-current-family-list');
+    const removeSelect = document.getElementById('remove-dep-select') as HTMLSelectElement;
+    
+    if (!container) return;
+
+    // 🌟 最優先で 'dependents' (配列/s付き) を取得する！
+    let depArray: any[] = [];
+    if (userData?.dependents && Array.isArray(userData.dependents) && userData.dependents.length > 0) {
+      depArray = userData.dependents; // 本物のデータをセット
+    } else if (userData?.dependent) {
+      // 万が一、単数形の方にデータが入っていた場合の予備
+      depArray = Array.isArray(userData.dependent) ? userData.dependent : [userData.dependent];
     }
+
+    // 🌟 さらに防弾：名前が空っぽのデータ ＆ 扶養から外れたデータ を除外する
+    const validDependents = depArray.filter(dep => {
+      // ① 名前がちゃんと入っているか？（テンプレート空箱の除外）
+      const hasName = dep && (dep.lastNameKanji || dep.firstNameKanji || dep.lastNameKana || dep.name);
+      
+      // ② 扶養から外れていないか？（喪失済みの除外）
+      // 💡 喪失フラグ（isRemoved）や喪失日（removedDate）がない人だけを「true(残す)」とする
+      const isActive = dep.isRemoved !== true && !dep.removedDate && dep.status !== '喪失';
+
+      // 両方の条件をクリアした人だけを「現在有効な家族」とする
+      return hasName && isActive;
+    });
+
+    // 有効な家族データが1件もない場合
+    if (validDependents.length === 0) {
+      container.innerHTML = '<p style="color: #666; font-size: 13px; margin: 0;">現在、登録されている扶養家族はいません。</p>';
+      if (removeSelect) removeSelect.innerHTML = '<option value="">対象の扶養家族がいません</option>';
+      return;
+    }
+
+    // 家族リストとプルダウンのHTMLを組み立てる
+    let listHtml = '';
+    let selectHtml = '<option value="">対象者を選択してください</option>';
+
+    validDependents.forEach((dep: any) => {
+      // JSONのキー名（lastNameKanji, relation, birthDate）に完全一致させました！
+      const fullName = `${dep.lastNameKanji || ''} ${dep.firstNameKanji || ''}`.trim() || '名前不明';
+      const relation = dep.relation || dep.relationship || '不明';
+      const birthDate = dep.birthDate || dep.birthdate || '未登録';
+
+      // ① リスト部分の追加
+      listHtml += `
+        <div style="padding: 8px; background: #fff; border-radius: 4px; border: 1px solid #ccc; font-size: 13px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+          <div>
+            <strong>${fullName}</strong> 
+            <span style="color: #0056b3; font-weight: bold;">(${relation})</span>
+          </div>
+          <div style="color: #555;">生年月日: ${birthDate}</div>
+        </div>
+      `;
+
+      // ② プルダウン部分の追加
+      selectHtml += `
+        <option value="${fullName}" data-relation="${relation}">${fullName} (${relation})</option>
+      `;
+    });
+
+    // 画面に一気に反映！
+    container.innerHTML = listHtml;
+    if (removeSelect) removeSelect.innerHTML = selectHtml;
+
+  } catch (error) {
+    console.error("家族データの取得に失敗しました:", error);
   }
+}
 
 
 

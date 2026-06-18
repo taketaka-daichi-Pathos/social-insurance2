@@ -750,21 +750,37 @@ async function showReviewPanel(email: string, status: string = '') {
         console.log("🔥 Firestoreの生年月日生データ:", userData);
         console.log("🔥 取得した生年月日:", empDob);
       }
+// 💡 --- 究極の自動採番ロジック（Firestore直接確認版！） ---
+let newEmployeeId = "";
 
-        // 💡 --- 自動採番ロジック（重複防止版） ---
-        let newEmployeeId = "";
+// まず、Firestoreのデータ（userData）の中に、すでに社員番号があるかチェック！
+if (userData && userData.employeeId) {
+  // すでに持っていれば、その番号をそのまま使う（＋1しない！）
+  newEmployeeId = userData.employeeId;
+} else {
+  // まだ持っていない（新規入社）の場合のみ、新しく番号を発行する！
+  // 🌟 変更：ブラウザの記憶ではなく、Firestoreから直接「今の会社の全社員」を取得して最大値を探す！
+  const currentCompanyId = localStorage.getItem('current_company_id');
+  let maxId = 0;
 
-        // まず、Firestoreのデータ（userData）の中に、すでに社員番号があるかチェック！
-        if (userData && userData.employeeId) {
-          // すでに持っていれば、その番号をそのまま使う（＋1しない！）
-          newEmployeeId = userData.employeeId;
-        } else {
-          // まだ持っていない（新規入社）の場合のみ、新しく番号を発行する！
-          let currentEmployeeSeq = parseInt(localStorage.getItem('hr_employee_sequence') || '0', 10);
-          currentEmployeeSeq += 1;
-          newEmployeeId = currentEmployeeSeq.toString().padStart(6, '0');
-          localStorage.setItem('hr_employee_sequence', currentEmployeeSeq.toString());
+  if (currentCompanyId) {
+    const usersQuery = query(collection(db, 'users'), where('companyId', '==', currentCompanyId));
+    const usersSnap = await getDocs(usersQuery);
+    
+    usersSnap.forEach(doc => {
+      const emp = doc.data();
+      if (emp.employeeId) {
+        const currentIdNum = parseInt(emp.employeeId, 10);
+        if (!isNaN(currentIdNum) && currentIdNum > maxId) {
+          maxId = currentIdNum; // 最大値を更新！
         }
+      }
+    });
+  }
+
+  // 見つけた最大値に ＋1 して、6桁でゼロ埋め
+  newEmployeeId = (maxId + 1).toString().padStart(6, '0');
+}
         // 💡 ------------------------------------
 
 　　　　// 🌟🌟🌟 ここから追加：Firestoreにも社員番号とメールアドレスを書き込む！ 🌟🌟🌟
@@ -1295,6 +1311,8 @@ btnReject?.addEventListener('click', async () => {
 });
 
 logoutBtn?.addEventListener('click', async () => {
+  localStorage.removeItem('hr_employee_master');
+  localStorage.removeItem('hr_employee_sequence');
   await signOut(auth); window.location.href = '/'; 
 });
 
@@ -4350,7 +4368,9 @@ async function initMonthlySalaryUI() {
         const employees: any[] = [];
         const payrollRecords: any[] = []; // ① ここで宣言しているのでOK！
         
-　　　　// ==========================================
+        let rebuiltMasterDB: any = {}; // 🌟🌟🌟 これを追加！記憶の再構築用の箱 🌟🌟🌟
+
+        // ==========================================
         // 🌟 NEW: 会社IDを取得して魔法のフィルターをかける！
         // ==========================================
         const currentCompanyId = localStorage.getItem('current_company_id');
@@ -4374,27 +4394,30 @@ async function initMonthlySalaryUI() {
         usersSnapshot.forEach((doc) => {
             const data = doc.data();
 
+            // 🌟🌟🌟 超重要追加：すべてのフィルターで弾かれる【前】に、絶対正しいデータで記憶を上書き！ 🌟🌟🌟
+            // これにより、画面に表示されない「退職者」や「未来の入社予定者」のIDも漏れなく記憶できます！
+            const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+            rebuiltMasterDB[fullName] = {
+              empId: data.employeeId
+            };
+            // 🌟🌟🌟 ここまで 🌟🌟🌟
+
+            // 👇＝＝＝ ここから下のフィルター群は一切変更なし！ ＝＝＝👇
             if (currentFilter === 'active' && data.employeeStatus !== 'active') return;
             if (currentFilter === 'retired' && data.employeeStatus !== 'retired') return;
-
-            // ...（この間の socInsType などのフィルター処理はそのまま変更なし！）...
 
             // =========================================================
             // 🌟🌟🌟 2. 【NEW】区分（社保区分）のフィルター 🌟🌟🌟
             // =========================================================
-            // 💡 過去のテストデータ（山田13など）には socialInsuranceType が保存されていないので、
-            //    空っぽの場合はデフォルトで 'regular'（一般・17日基準）として扱う！
             const socInsType = data.socialInsuranceType || 'regular'; 
 
             if (currentTypeFilter !== 'all') {
-                // 画面のプルダウンの値（regular, part_time, short_time）と一致しない人は弾く！
                 if (socInsType !== currentTypeFilter) return; 
             }
             // =========================================================
-　　　　　　　// =========================================================
+            // =========================================================
             // 🌟🌟🌟 【ここに追加！】入社月より前の画面なら弾く処理 🌟🌟🌟
             // =========================================================
-            // 画像のデータベース構造に合わせて、contractInfo の中の startDate を取得！
             const joinDateStr = data.contractInfo?.startDate; 
             
             if (joinDateStr) {
@@ -4402,7 +4425,6 @@ async function initMonthlySalaryUI() {
                 const joinYear = joinDateObj.getFullYear();
                 const joinMonth = joinDateObj.getMonth() + 1;
 
-                // 画面の年月（currentYear, currentMonth）が、入社年月より「過去」なら配列に入れない（スキップ）！
                 if (currentYear < joinYear || (currentYear === joinYear && currentMonth < joinMonth)) {
                     return; 
                 }
@@ -4411,6 +4433,9 @@ async function initMonthlySalaryUI() {
 
             employees.push({ id: doc.id, ...data });
         });
+
+        // 🌟🌟🌟 追加：ループが終わったら、最新の記憶をブラウザにガチャン！と保存！ 🌟🌟🌟
+        localStorage.setItem('hr_employee_master', JSON.stringify(rebuiltMasterDB));
 
         // 社員番号順に並び替え
         employees.sort((a, b) => {
@@ -4421,7 +4446,7 @@ async function initMonthlySalaryUI() {
           return 0;
         });
 
- 　　　　 // 💡 ここで「該当月の給与データ」をFirebaseから取ってくる！
+ 　　　　// 💡 ここで「該当月の給与データ」をFirebaseから取ってくる！
         // 🌟 修正②：給与データも「自分の会社」のものだけで絞り込む！
         const payrollQuery = query(collection(db, "monthly_payroll_records"), where("companyId", "==", currentCompanyId));
         const payrollSnapshot = await getDocs(payrollQuery);
@@ -5679,6 +5704,7 @@ if (masterCsvInput) {
       initSalaryFilterUI('btn-salary-active', 'btn-salary-retired', 'salary-emp-filter', 'salary', loadMonthlyData);
 
   }
+  
 // ==========================================
 // 🎁 賞与（ボーナス）タブ（支給履歴タイムライン・バッジ対応の完全版）
 // ==========================================
@@ -5714,16 +5740,27 @@ async function initBonusUI() {
         const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
         const usersSnapshot = await getDocs(usersQuery);
         const employees: any[] = [];
+        
+        let rebuiltMasterDB: any = {}; // 🌟🌟🌟 これを追加！記憶の再構築用の箱 🌟🌟🌟
+        
         const currentFilter = localStorage.getItem('bonus_status') || 'active';
         const currentTypeFilter = localStorage.getItem('bonus_type') || 'all';
 
         usersSnapshot.forEach((doc) => {
             const data = doc.data();  
+
+            // 🌟🌟🌟 超重要：すべてのフィルターで弾かれる【前】に全員のIDを記憶する！ 🌟🌟🌟
+            const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+            rebuiltMasterDB[fullName] = {
+              empId: data.employeeId
+            };
+            // 🌟🌟🌟 ここまで 🌟🌟🌟
+
             // 🌟 フィルター処理：条件に合わない人は配列に入れない（弾く）
             if (currentFilter === 'active' && data.employeeStatus !== 'active') return;
             if (currentFilter === 'retired' && data.employeeStatus !== 'retired') return;
             
-           　// =========================================================
+            // =========================================================
             // 🌟🌟🌟 【ここに追加！！】区分（社保区分）のフィルター 🌟🌟🌟
             // =========================================================
             const socInsType = data.socialInsuranceType || 'regular'; 
@@ -5734,19 +5771,21 @@ async function initBonusUI() {
             }
             // =========================================================
 
-
             employees.push({ id: doc.id, ...data });
         });
-  
+
+        // 🌟🌟🌟 追加：ループが終わった直後に、最新の記憶をブラウザに保存！ 🌟🌟🌟
+        localStorage.setItem('hr_employee_master', JSON.stringify(rebuiltMasterDB));
+
         // =========================================================
-                // 🌟🌟🌟 【ここに追加！】従業員リストを描画前にID順に並び替える 🌟🌟🌟
-                // =========================================================
-                employees.sort((a: any, b: any) => {
-                  const idA = String(a.employeeId || a.employeeNumber || a.id || "");
-                  const idB = String(b.employeeId || b.employeeNumber || b.id || "");
-                  return idA.localeCompare(idB, undefined, { numeric: true });
-              });
-              // =========================================================
+        // 🌟🌟🌟 【ここに追加！】従業員リストを描画前にID順に並び替える 🌟🌟🌟
+        // =========================================================
+        employees.sort((a: any, b: any) => {
+          const idA = String(a.employeeId || a.employeeNumber || a.id || "");
+          const idB = String(b.employeeId || b.employeeNumber || b.id || "");
+          return idA.localeCompare(idB, undefined, { numeric: true });
+        });
+        // =========================================================
         
         // ⭕ 書き換え後
 // 🚨🚨🚨 【最強監視カメラ版】フィルターを外して全部ぶちまける！ 🚨🚨🚨
@@ -6334,28 +6373,34 @@ async function initSanteiUI() {
   
     try {
       // 1️⃣ Firebaseから「従業員マスタ(users)」をごっそり取得
-     // Firebaseから「従業員マスタ(users)」をごっそり取得
-     const currentCompanyId = localStorage.getItem('current_company_id');
-     if (!currentCompanyId) return;
+      const currentCompanyId = localStorage.getItem('current_company_id');
+      if (!currentCompanyId) return;
+      
+      // 🌟 usersコレクションにフィルター
+      const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
+      const usersSnapshot = await getDocs(usersQuery);
+      const employees: any[] = [];
+      
+      let rebuiltMasterDB: any = {}; // 🌟🌟🌟 これを追加！記憶の再構築用の箱 🌟🌟🌟
      
-     // 🌟 usersコレクションにフィルター
-     const usersQuery = query(collection(db, "users"), where("companyId", "==", currentCompanyId));
-     const usersSnapshot = await getDocs(usersQuery);
-    const employees: any[] = [];
-    
-    const currentFilter = localStorage.getItem('santei_status') || 'active';
-    const currentTypeFilter = localStorage.getItem('santei_type') || 'all';
+      const currentFilter = localStorage.getItem('santei_status') || 'active';
+      const currentTypeFilter = localStorage.getItem('santei_type') || 'all';
 
-    usersSnapshot.forEach((doc) => {
-      // 🌟 usersSnapshot.forEach(...) が終わった直後にこれを貼り付ける！
-        console.log("👀 今のフィルター状態:", currentFilter);
-        console.log("👥 フィルター通過した人数:", employees.length, "人", employees);
-        const data = doc.data();
-        
-        // 🌟 フィルター処理：条件に合わない人は配列に入れない（弾く）
-        if (currentFilter === 'active' && data.employeeStatus !== 'active') return;
-        if (currentFilter === 'retired' && data.employeeStatus !== 'retired') return;
-        // =========================================================
+      usersSnapshot.forEach((doc) => {
+          const data = doc.data();
+          
+          // 🌟🌟🌟 超重要：フィルターで弾かれる【前】に全員のIDを記憶する！ 🌟🌟🌟
+          const fullName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+          rebuiltMasterDB[fullName] = {
+            empId: data.employeeId
+          };
+          // 🌟🌟🌟 ここまで 🌟🌟🌟
+
+          // 🌟 フィルター処理：条件に合わない人は配列に入れない（弾く）
+          if (currentFilter === 'active' && data.employeeStatus !== 'active') return;
+          if (currentFilter === 'retired' && data.employeeStatus !== 'retired') return;
+          
+          // =========================================================
           // 🌟🌟🌟 【ここに追加！！】区分（社保区分）のフィルター 🌟🌟🌟
           // =========================================================
           const socInsType = data.socialInsuranceType || 'regular'; 
@@ -6365,8 +6410,16 @@ async function initSanteiUI() {
               if (socInsType !== currentTypeFilter) return; 
           }
           // =========================================================
-        employees.push({ id: doc.id, ...data });
-    });
+          employees.push({ id: doc.id, ...data });
+      });
+
+      // 🌟🌟🌟 追加：ループが終わった直後に、最新の記憶をブラウザに保存！ 🌟🌟🌟
+      localStorage.setItem('hr_employee_master', JSON.stringify(rebuiltMasterDB));
+
+      console.log("👀 今のフィルター状態:", currentFilter, " / 区分:", currentTypeFilter);
+      console.log("👥 フィルター通過した人数:", employees.length, "人", employees);
+
+
       // 2️⃣ Firebaseから「毎月の給与実績(monthly_payroll_records)」をごっそり取得
       const payrollQuery = query(collection(db, "monthly_payroll_records"), where("companyId", "==", currentCompanyId));
 　　　const payrollSnapshot = await getDocs(payrollQuery);

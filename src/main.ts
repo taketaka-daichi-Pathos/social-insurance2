@@ -35,6 +35,11 @@ if (toggleBtn && formTitle && submitBtn) {
 
 // 👑 ログイン成功時・作成時の画面遷移（SaaS対応版マルチルーティング）
 async function handleUserRouting(user: User) {
+  // 👇＝＝＝ 🌟 STEP 1: ここを追加！ ＝＝＝👇
+  // ログイン成功直後（データを読み込み始める前）に、必ず過去の会社の記憶を破壊する！
+  localStorage.removeItem('hr_employee_master');
+  localStorage.removeItem('hr_employee_sequence');
+  // ☝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝☝
   try {
     const userDocRef = doc(db, 'users', user.uid);
     const userDoc = await getDoc(userDocRef);

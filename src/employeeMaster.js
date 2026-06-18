@@ -43,11 +43,19 @@ export async function initEmployeeMasterUI() {
                 tableBody.innerHTML = ''; // テーブル初期化
                 // 🛑 ステップ：Firestoreのデータを一旦「配列」にすべて詰め込む！
                 let allEmployees = [];
+                let rebuiltMasterDB = {}; // 🌟 追加：記憶の再構築用の新しい箱！
                 usersSnap.forEach((uSnap) => {
                     const emp = uSnap.data();
-                    emp.docId = uSnap.id; // ドキュメントIDもデータの中に入れておく
+                    emp.docId = uSnap.id;
                     allEmployees.push(emp);
+                    // 🌟 追加：Firestoreの絶対正しいデータで記憶を上書きする！
+                    const fullName = `${emp.lastNameKanji || ''} ${emp.firstNameKanji || ''}`.trim();
+                    rebuiltMasterDB[fullName] = {
+                        empId: emp.employeeId
+                    };
                 });
+                // 🌟 追加：ループが終わったら、最新の記憶をブラウザにガチャン！と保存！
+                localStorage.setItem('hr_employee_master', JSON.stringify(rebuiltMasterDB));
                 // 🌟 追加：現在のプルダウンの値を取得
                 const selectedType = typeFilterSelect?.value || 'all';
                 // 🌟 ステップ2-1：タブ（現役/退職）の条件で絞り込む

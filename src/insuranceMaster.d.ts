@@ -12,6 +12,7 @@ export interface InsuranceSettings {
     childSupportRateEmp?: number;
     childSupportRateComp?: number;
 }
+export declare function calcPremium(base: number, rate: number): number;
 export declare const PREFECTURE_HEALTH_RATES: {
     [key: string]: number;
 };

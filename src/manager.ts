@@ -2,11 +2,11 @@ import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, collection, getDocs, updateDoc,writeBatch, getDoc, addDoc, query, where,onSnapshot } from 'firebase/firestore'; 
 import emailjs from '@emailjs/browser'; 
 import { auth, db } from './config/firebase.js';
-import { calculateSocialInsurance, DEFAULT_RATES } from './insuranceMaster.js';
+import { calculateSocialInsurance, DEFAULT_RATES, calcPremium,PREFECTURE_HEALTH_RATES } from './insuranceMaster.js';
 import { initEmployeeMasterUI } from './employeeMaster.js';
-import { PREFECTURE_HEALTH_RATES } from './insuranceMaster.js';
 import { initLifeEventUI } from './tab-life-event.js';
 import Encoding from 'encoding-japanese';
+
 
 // =================================================================
 // 🛡️ セキュリティガード＆会社ID強制ロック（最強版）
@@ -78,6 +78,26 @@ async function sendInviteEmail(email: string) {
     return false;
   }
 }
+
+
+// =========================================================
+// 🛡️ 労務SaaS専用エンジン：社会保険料の端数処理（通貨の単位及び貨幣の発行等に関する法律）
+// =========================================================
+function calcEmployeePremium(wage: number, rate: number): number {
+  // 1. まず標準報酬月額と料率を掛け算する
+  const exactAmount = wage * rate;
+  
+  // 2. 小数点以下だけを抽出（※JS特有の浮動小数点バグを防ぐため、念のため第3位で丸める）
+  const fraction = Math.round((exactAmount % 1) * 1000) / 1000;
+  
+  // 3. 法律の絶対ルール：50銭（0.50）以下は切り捨て、51銭（0.51）以上は切り上げ！
+  if (fraction <= 0.50) {
+      return Math.floor(exactAmount);
+  } else {
+      return Math.ceil(exactAmount);
+  }
+}
+
 
 // 🌟 タスク名から「従業員向けの親切な通知メッセージ」を生成する関数
 // 🌟 タスク名から「従業員向けの適切な通知メッセージ」を生成する関数
@@ -194,122 +214,126 @@ async function loadCompanySettings() {
 }
 
 // loadCompanySettings();
-
 // 🌟 追加①：関数の外（ファイルの上の方など）で、カメラの電源スイッチを変数として用意しておく
 let unsubscribeInvites: any = null;
-// 一覧読み込み（🔥 リアルタイム監視版に進化！）
+
 // 一覧読み込み（🔥 リアルタイム監視＆SaaSフィルター完全対応版！）
-function loadEmployeeList() { 
+async function loadEmployeeList() { // 👈 async を追加しました！
+  const emailListBody = document.getElementById('email-list-body'); // ※IDはHTMLに合わせてください
+  const onboardingListBody = document.getElementById('onboarding-list-body');
   if (!emailListBody || !onboardingListBody) return;
 
   // 🌟 追加①：ログイン中の自分の「会社ID」をLocalStorageから取得
   const currentCompanyId = localStorage.getItem('current_company_id');
   if (!currentCompanyId) return;
 
-  // 🌟 追加②：魔法のフィルター！「自分の会社の招待状」だけを狙い撃ち！
-  const invitesQuery = query(collection(db, 'invites'), where('companyId', '==', currentCompanyId));
+  // 🌟 追加②：もしすでに監視カメラが動いていたら、一度停止（キャンセル）する！
+  if (unsubscribeInvites) {
+    unsubscribeInvites();
+  }
 
-// 🌟 追加②：もしすでに監視カメラが動いていたら、一度停止（キャンセル）する！
-if (unsubscribeInvites) {
-  unsubscribeInvites();
-}
-
-// 🌟 変更③：onSnapshot の戻り値（停止スイッチ）を変数に保存しておく！
-unsubscribeInvites = onSnapshot(invitesQuery, async (querySnapshot) => {
+  try {
+    // 💡【重要修正】プロフィールの取得（getDocs）は onSnapshot の外に出す！
+    // こうすることで、リストが何百回更新されても無駄な通信が発生しません。
+    const usersQuery = query(collection(db, 'users'), where('companyId', '==', currentCompanyId));
+    const usersSnap = await getDocs(usersQuery);
     
-    // 💡 変更があるたびに、一度テーブルの中身を真っさらにする（増殖を防ぐため）
-    emailListBody.innerHTML = ''; 
-    onboardingListBody.innerHTML = '';
-    currentOnboardingUsers = [];
-    currentSubmittedUsers = [];
+    const userProfiles: any = {};
+    usersSnap.forEach(doc => {
+      userProfiles[doc.id] = doc.data();
+      if (doc.data().email) userProfiles[doc.data().email] = doc.data();
+    });
 
-    try {
-      // 🌟 追加③：ユーザーのプロフィール情報も「自分の会社の人」だけに絞る！
-      const usersQuery = query(collection(db, 'users'), where('companyId', '==', currentCompanyId));
-      const usersSnap = await getDocs(usersQuery);
-      
-      const userProfiles: any = {};
-      usersSnap.forEach(doc => {
-        userProfiles[doc.id] = doc.data();
-        if (doc.data().email) userProfiles[doc.data().email] = doc.data();
-      });
+    // 🌟 魔法のフィルター！「自分の会社の招待状」だけを狙い撃ち！
+    const invitesQuery = query(collection(db, 'invites'), where('companyId', '==', currentCompanyId));
 
-      // 監視して取ってきた最新の invites データをループ処理！
-      querySnapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        const email = docSnap.id;
-        const status = data.status || '未登録';
+    // 🌟 変更③：onSnapshot の戻り値（停止スイッチ）を変数に保存しておく！
+    unsubscribeInvites = onSnapshot(invitesQuery, (querySnapshot) => {
+        
+        // 💡 変更があるたびに、一度テーブルの中身を真っさらにする（増殖を防ぐため）
+        emailListBody.innerHTML = ''; 
+        onboardingListBody.innerHTML = '';
+        currentOnboardingUsers = [];
+        currentSubmittedUsers = [];
 
-        // 💡 完了した人はここでスキップ（一覧から消える魔法！）
-        if (status === '完了') return; 
+        // 監視して取ってきた最新の invites データをループ処理！
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const email = docSnap.id;
+          const status = data.status || '未登録';
 
-        if (status === '未登録') {
-          // --- 元々の未登録処理（完全維持！） ---
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td style="padding: 12px 8px; font-weight: bold; color: #555;">${email}</td>
-            <td><span style="background-color: #6c757d; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">⬜️ 未ログイン</span></td>
-            <td id="action-cell-${email.replace(/[@.]/g, '')}"></td>
-          `;
-          emailListBody.appendChild(tr);
+          // 💡 完了した人はここでスキップ（一覧から消える魔法！）
+          if (status === '完了') return; 
 
-          const actionCell = document.getElementById(`action-cell-${email.replace(/[@.]/g, '')}`);
-          const btn = document.createElement('button');
-          btn.innerText = '招待メール再送';
-          btn.style.padding = '4px 8px'; btn.style.fontSize = '12px'; btn.style.cursor = 'pointer';
-          btn.addEventListener('click', async () => {
-            btn.innerText = '送信中...';
-            const success = await sendInviteEmail(email); // 竹高さんのオリジナル関数を維持！
-            alert(success ? '再送しました！' : '送信失敗');
+          if (status === '未登録') {
+            // --- 元々の未登録処理（完全維持！） ---
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td style="padding: 12px 8px; font-weight: bold; color: #555;">${email}</td>
+              <td><span style="background-color: #6c757d; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">⬜️ 未ログイン</span></td>
+              <td id="action-cell-${email.replace(/[@.]/g, '')}"></td>
+            `;
+            emailListBody.appendChild(tr);
+
+            const actionCell = document.getElementById(`action-cell-${email.replace(/[@.]/g, '')}`);
+            const btn = document.createElement('button');
             btn.innerText = '招待メール再送';
-          });
-          actionCell?.appendChild(btn);
+            btn.style.padding = '4px 8px'; btn.style.fontSize = '12px'; btn.style.cursor = 'pointer';
+            btn.addEventListener('click', async () => {
+              btn.innerText = '送信中...';
+              const success = await sendInviteEmail(email); // 竹高さんのオリジナル関数を維持！
+              alert(success ? '再送しました！' : '送信失敗');
+              btn.innerText = '招待メール再送';
+            });
+            actionCell?.appendChild(btn);
 
-        } else {
-          // --- ステータスごとのバッジとテキスト判定（完全維持！） ---
-          let statusBadge = '';
-          let taskText = '';
-          if (status === '入力中') {
-            statusBadge = `<span style="background-color: #007bff; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">🟦 入力中</span>`;
-            taskText = '従業員がフォーム入力中';
-          } else if (status === '確認待ち') {
-            statusBadge = `<span style="background-color: #ffc107; color: #333; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">🟨 確認待ち</span>`;
-            taskText = '提出あり。要確認・承認';
-          } else if (status === '承認済') {
-            statusBadge = `<span style="background-color: #28a745; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">🟩 承認済</span>`;
-            taskText = 'e-Gov 一括出力の対象';
-            if (userProfiles[email]) currentOnboardingUsers.push(userProfiles[email]); 
-          } else if (status === '提出済') {
-            statusBadge = `<span style="background-color: #17a2b8; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">🟦 提出済</span>`;
-            taskText = '役所の公認待ち';
-            if (userProfiles[email]) {
-              currentSubmittedUsers.push({ 
-                ...userProfiles[email], 
-                targetEmail: email 
-              });
+          } else {
+            // --- ステータスごとのバッジとテキスト判定（完全維持！） ---
+            let statusBadge = '';
+            let taskText = '';
+            if (status === '入力中') {
+              statusBadge = `<span style="background-color: #007bff; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">🟦 入力中</span>`;
+              taskText = '従業員がフォーム入力中';
+            } else if (status === '確認待ち') {
+              statusBadge = `<span style="background-color: #ffc107; color: #333; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">🟨 確認待ち</span>`;
+              taskText = '提出あり。要確認・承認';
+            } else if (status === '承認済') {
+              statusBadge = `<span style="background-color: #28a745; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">🟩 承認済</span>`;
+              taskText = 'e-Gov 一括出力の対象';
+              if (userProfiles[email]) currentOnboardingUsers.push(userProfiles[email]); 
+            } else if (status === '提出済') {
+              statusBadge = `<span style="background-color: #17a2b8; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">🟦 提出済</span>`;
+              taskText = '役所の公認待ち';
+              if (userProfiles[email]) {
+                currentSubmittedUsers.push({ 
+                  ...userProfiles[email], 
+                  targetEmail: email 
+                });
+              }
             }
+
+            let displayName = email;
+            const uData = userProfiles[email]; 
+
+            if (uData && uData.lastNameKanji && uData.firstNameKanji) {
+              displayName = `${uData.lastNameKanji} ${uData.firstNameKanji}<br><span style="font-size:10px; color:#666; font-weight:normal;">${email}</span>`;
+            }
+
+            const tr = document.createElement('tr');
+            tr.className = 'selectable';
+            tr.innerHTML = `<td style="padding: 12px 8px; font-weight: bold; color: #0056b3;">${displayName}</td><td>${statusBadge}</td><td style="color: #666; font-size: 13px;">${taskText}</td>`;
+            
+            // 🌟 リアルタイム更新された最新のstatusがここで渡される！
+            tr.addEventListener('click', () => showReviewPanel(email, status)); 
+            
+            onboardingListBody.appendChild(tr);
           }
+        });
+    });
 
-          let displayName = email;
-          const uData = userProfiles[email]; 
-
-          if (uData && uData.lastNameKanji && uData.firstNameKanji) {
-            displayName = `${uData.lastNameKanji} ${uData.firstNameKanji}<br><span style="font-size:10px; color:#666; font-weight:normal;">${email}</span>`;
-          }
-
-          const tr = document.createElement('tr');
-          tr.className = 'selectable';
-          tr.innerHTML = `<td style="padding: 12px 8px; font-weight: bold; color: #0056b3;">${displayName}</td><td>${statusBadge}</td><td style="color: #666; font-size: 13px;">${taskText}</td>`;
-          
-          tr.addEventListener('click', () => showReviewPanel(email, status)); // 竹高さんのオリジナル関数を維持！
-          
-          onboardingListBody.appendChild(tr);
-        }
-      });
-    } catch (error) {
-      console.error("リストのリアルタイム取得エラー:", error);
-    }
-  });
+  } catch (error) {
+    console.error("リストの取得エラー:", error);
+  }
 }
 
 // 💡 【追加】給与計算用の年齢計算ロジック（1日生まれの罠対応）
@@ -364,7 +388,7 @@ async function fetchCompanyInsuranceSettings(targetYear: number, targetMonth: nu
         return {
           insuranceType: validSetting.insuranceType || 'kyokai',
           prefecture: validSetting.prefecture || '東京都',
-          healthRate: validSetting.healthRate || 0.0998,
+          healthRate: validSetting.healthRate || 0.0985,
           healthRateEmp: validSetting.healthRateEmp || 0.0499,
           healthRateComp: validSetting.healthRateComp || 0.0499,
           nursingRate: validSetting.nursingRate || 0.0160,
@@ -3752,6 +3776,10 @@ async function loadInsuranceMasterTab() {
     const selectPrefecture = document.getElementById('select-prefecture') as HTMLSelectElement;
     const inputCustomRate = document.getElementById('input-custom-rate') as HTMLInputElement;
     const btnResetRate = document.getElementById('btn-reset-rate') as HTMLButtonElement;
+    // 👇＝＝＝＝ ここから追加！ ＝＝＝＝👇
+    const inputNursingRate = document.getElementById('input-nursing-rate') as HTMLInputElement;
+    const btnResetNursingRate = document.getElementById('btn-reset-nursing-rate') as HTMLButtonElement;
+    // ☝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝☝
     
     // 組合健保用
     const inputKumiaiName = document.getElementById('input-kumiai-name') as HTMLInputElement;
@@ -3821,7 +3849,7 @@ const loadCurrentSettings = async () => {
 
       if (insType === 'kyokai') {
         selectPrefecture.value = latestData.prefecture || '東京都';
-        inputCustomRate.value = ((latestData.healthRate || 0.0998) * 100).toFixed(2);
+        inputCustomRate.value = ((latestData.healthRate || 0.0985) * 100).toFixed(2);
       } else {
         inputKumiaiName.value = latestData.prefecture || '';
         kHealthEmp.value = ((latestData.healthRateEmp || 0) * 100).toFixed(3);
@@ -3833,6 +3861,8 @@ const loadCurrentSettings = async () => {
         if (inputChildContribution) inputChildContribution.value = ((latestData.childContributionRate || 0.0036) * 100).toFixed(3);
         if (inputChildSupportEmp) inputChildSupportEmp.value = ((latestData.childSupportRateEmp || 0) * 100).toFixed(3);
         if (inputChildSupportComp) inputChildSupportComp.value = ((latestData.childSupportRateComp || 0) * 100).toFixed(3);
+        // 👇👇 ここに1行追加！（DBに保存されてる介護保険料率を画面に復元する）👇👇
+        if (inputNursingRate) inputNursingRate.value = ((latestData.nursingRate || 0.0162) * 100).toFixed(2);
     }
   } catch (e) {
     console.error("設定の読み込みに失敗:", e);
@@ -3909,20 +3939,25 @@ saveBtn.addEventListener('click', async () => {
   };
 
   if (selectedType === 'kyokai') {
-    // 🚨 協会けんぽ用の入力チェック（竹高さんのご指摘通り復活！）
-    if (!selectPrefecture.value || !inputCustomRate.value) {
-      alert('都道府県と料率を正しく入力してください！');
+    // 🚨 協会けんぽ用の入力チェック（介護保険の空欄チェックも追加！）
+    if (!selectPrefecture.value || !inputCustomRate.value || !inputNursingRate.value) {
+      alert('都道府県と各料率を正しく入力してください！');
       return; // ここで処理をストップ
     }
 
     const totalRate = Number(inputCustomRate.value) / 100;
+    // 🌟 NEW: 画面に入力された介護保険料率（1.62など）を取得して計算！
+    const totalNursingRate = Number(inputNursingRate.value) / 100;
+
     saveData.prefecture = selectPrefecture.value;
     saveData.healthRate = totalRate;
     saveData.healthRateEmp = totalRate / 2;
     saveData.healthRateComp = totalRate / 2;
-    saveData.nursingRate = 0.0160;
-    saveData.nursingRateEmp = 0.0160 / 2;
-    saveData.nursingRateComp = 0.0160 / 2;
+    
+    // 🌟 ハードコード脱却！画面の数字をそのままDBに保存！
+    saveData.nursingRate = totalNursingRate;
+    saveData.nursingRateEmp = totalNursingRate / 2;
+    saveData.nursingRateComp = totalNursingRate / 2;
 
   } else {
     // 🚨 組合健保用の入力チェック（空欄が1つでもあればストップ！）
@@ -4287,8 +4322,13 @@ function getZuijiTargets(revisionYear: number, revisionMonth: number, employees:
                   const currentGrade = Number(emp.healthGrade || 1);
                   const gradeDiff = Math.abs(newGrade - currentGrade);
 
-                  if (gradeDiff >= 2) {
+                  // 🌟🌟🌟 【追加】青ボタンを押した後の「消えない問題」を解決！ 🌟🌟🌟
+                  // もし、この月（revisionYear年 revisionMonth月）の予約チケットがすでにDBにあるなら、対応済みなのでリストから除外！
+                  const isAlreadyReserved = (Number(emp.scheduledApplyYear) === revisionYear && Number(emp.scheduledApplyMonth) === revisionMonth);
+                  
+                  if (gradeDiff >= 2 && !isAlreadyReserved) { // 👈 !isAlreadyReserved を追加！
                       targets.push({
+                          realFirebaseId: emp.id,
                           id: targetEmpId,
                           name: empName,
                           m1, m2, m3,
@@ -4300,7 +4340,12 @@ function getZuijiTargets(revisionYear: number, revisionMonth: number, employees:
           }
       }
   });
-  return targets;
+// 🌟🌟🌟 【追加】画面に出す前に、ID順に綺麗に整列させる！ 🌟🌟🌟
+return targets.sort((a, b) => {
+  const idA = String(a.id || "");
+  const idB = String(b.id || "");
+  return idA.localeCompare(idB, undefined, { numeric: true });
+});
 }
 
 
@@ -4326,6 +4371,115 @@ async function initMonthlySalaryUI() {
 
       const alertBox = document.getElementById('monthly-change-alert');
       if (alertBox) alertBox.style.display = 'none';
+
+　　　// =========================================================
+      // 🚨🚨 【真・完全無敵版】ロック確認＆ボタン処理（絶対に一番上！）🚨🚨
+      // =========================================================
+      const lockCompanyId = localStorage.getItem('current_company_id'); // 下のコードと名前被りを防ぐ
+      
+      if (lockCompanyId) {
+          
+          const targetMonth = currentMonth;
+          // ① DBを覗いて「今見ている月」がロックされているかチェック！
+          const statusDocId = `${lockCompanyId}_${currentYear}_${targetMonth}`;
+          
+          console.log(`🕵️‍♂️ [名探偵ログ] 今から ${statusDocId} の鍵をチェックします！`);
+          const statusSnap = await getDoc(doc(db, 'payroll_status', statusDocId));
+          console.log(`🕵️‍♂️ [名探偵ログ] チケットの存在判定:`, statusSnap.exists());
+
+          // 👇🚨 【タイムトラベル防御】
+          if (currentMonth !== targetMonth) {
+            console.log(`👻 幽霊ブロック: ${targetMonth}月の結果が遅れて来ました破棄します！`);
+            return; 
+          }
+
+          // 👇🚨 【ここが魔法の1行！】DBから返事が来た「後」に、画面の最新ボタンを捕まえる！
+          const latestBtnSave = document.getElementById('btn-save-monthly') as HTMLButtonElement;
+          if (!latestBtnSave) return;
+
+          if (statusSnap.exists() && statusSnap.data().isConfirmed) {
+              (window as any).isCurrentMonthLocked = true;
+              latestBtnSave.innerText = "🔒 この月の実績は確定済みです";
+              latestBtnSave.style.backgroundColor = "#6c757d"; 
+              latestBtnSave.style.cursor = "not-allowed";
+              latestBtnSave.disabled = true;
+              latestBtnSave.style.pointerEvents = "none"; 
+          } else {
+              (window as any).isCurrentMonthLocked = false;
+              latestBtnSave.innerText = "💾 この月の実績を確定する（一括保存）";
+              latestBtnSave.style.backgroundColor = "#0056b3"; 
+              latestBtnSave.style.cursor = "pointer";
+              latestBtnSave.disabled = false;
+              latestBtnSave.style.pointerEvents = "auto"; 
+          }
+
+          // ② ボタンを押した時の処理
+          latestBtnSave.onclick = async () => {
+              if ((window as any).isCurrentMonthLocked) return; 
+
+              console.log(`🔘 ${currentMonth}月の確定ボタンがクリックされました！`);
+              
+              latestBtnSave.innerText = "⏳ データを保存中...";
+              latestBtnSave.disabled = true;
+
+              try {
+                  const individualSaveBtns = document.querySelectorAll('.btn-indiv-save'); 
+                  if (individualSaveBtns.length === 0) {
+                      alert("保存できるデータがありません。");
+                      latestBtnSave.innerText = "💾 この月の実績を確定する（一括保存）";
+                      latestBtnSave.disabled = false;
+                      latestBtnSave.style.pointerEvents = "auto";
+                      return;
+                  }
+
+                  individualSaveBtns.forEach(btn => { (btn as HTMLButtonElement).click(); });
+
+                  await new Promise(resolve => setTimeout(resolve, 3000));
+
+                  const batch = writeBatch(db); 
+                  const statusRef = doc(db, 'payroll_status', statusDocId);
+                  
+                  batch.set(statusRef, {
+                      companyId: lockCompanyId,
+                      year: currentYear,
+                      month: currentMonth,
+                      isConfirmed: true,
+                      confirmedAt: new Date()
+                  }, { merge: true });
+                  
+                  await batch.commit(); 
+
+                  latestBtnSave.innerText = "🔒 この月の実績は確定済みです";
+                  latestBtnSave.style.backgroundColor = "#6c757d"; 
+                  latestBtnSave.style.cursor = "not-allowed";
+                  latestBtnSave.style.pointerEvents = "none"; 
+
+                  (window as any).isCurrentMonthLocked = true;
+
+                  document.querySelectorAll('.btn-indiv-save').forEach(btn => { (btn as HTMLButtonElement).style.display = "none"; });
+                  document.querySelectorAll('.btn-toggle-adjust').forEach(btn => { (btn as HTMLButtonElement).style.display = "none"; });
+
+                  alert(`✅ ${currentYear}年${currentMonth}月のデータを確定し、ロックしました！`);
+
+                  // =========================================================
+                  // 👇 ここから下は竹高さんの「随時改定検知＆タスク生成ロジック」
+                  // （※中身は既存のコードをそのまま配置してください！）
+                  // =========================================================
+
+              } catch (error) {
+                  console.error("一括保存中にエラー:", error);
+                  alert(`保存中にエラーが発生しました。通信環境を確認してください。`);
+                  
+                  latestBtnSave.innerText = "💾 この月の実績を確定する（一括保存）";
+                  latestBtnSave.disabled = false;
+                  latestBtnSave.style.backgroundColor = "#0056b3"; 
+                  latestBtnSave.style.pointerEvents = "auto"; 
+              } 
+          }; 
+      }
+      // =========================================================
+      // =========================================================
+
 
       // 🌟 ここに期間更新処理をドッキング！
       const currentCompanyId = localStorage.getItem('current_company_id');
@@ -4357,8 +4511,6 @@ async function initMonthlySalaryUI() {
       const display = document.getElementById('display-current-month');
       if (display) display.innerText = `${currentYear}年 ${currentMonth}月分 給与実績`;
 
-
-  
       const tbody = document.getElementById('salary-input-body');
       if (!tbody) return;
       tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 20px;">🔄 ${currentMonth}月のデータを読み込み中...</td></tr>`;
@@ -4497,17 +4649,45 @@ if (!prevCompanyRates || Object.keys(prevCompanyRates).length === 0 || !prevComp
             const empId = emp.employeeId || emp.employeeNumber || emp.id;
             const empType = emp.contractInfo?.empType || "未設定";
             
+
             // 🌟 修正1：後で上書きできるように「const」から「let」に変更！
             let hGrade = emp.healthGrade || 1;
             let pGrade = emp.pensionGrade || 1;
   
-            // 🌟🌟🌟 【タイムマシン変身ロジックを追加！】 🌟🌟🌟
-            // もし「算定の予約チケット」を持っていて、かつ今開いている画面が「2026年9月以降」なら…
-            if (emp.santeiNextHealthGrade && (currentYear > 2026 || (currentYear === 2026 && currentMonth >= 9))) {
-                hGrade = Number(emp.santeiNextHealthGrade); // 予約されていた新等級にすり替え！
-                pGrade = Number(emp.santeiNextPensionGrade);
-            }
-            // 🌟🌟🌟 【タイムマシンここまで】 🌟🌟🌟
+
+
+
+          // 🌟🌟🌟 【タイムマシン変身ロジック（最終形態・当月/翌月完全対応！）】 🌟🌟🌟
+
+          // 🎫 ① まずは「算定基礎（9月定時決定）」の予約チケットをチェック
+          if (emp.santeiNextHealthGrade && emp.santeiDeductionMonth) {
+              const deductionYear = emp.santeiDeductionYear || 2026; 
+              if (currentYear > deductionYear || (currentYear === deductionYear && currentMonth >= emp.santeiDeductionMonth)) {
+                  hGrade = Number(emp.santeiNextHealthGrade); 
+                  pGrade = Number(emp.santeiNextPensionGrade);
+              }
+          } else if (emp.santeiNextHealthGrade && (currentYear > 2026 || (currentYear === 2026 && currentMonth >= 9))) {
+              // 過去データ用の保険
+              hGrade = Number(emp.santeiNextHealthGrade); 
+              pGrade = Number(emp.santeiNextPensionGrade);
+          }
+
+          // 🎫 ② 次に「随時改定（月変）」の予約チケットをチェック（絶対優先！）
+          if (emp.scheduledHealthGrade && emp.scheduledDeductionYear && emp.scheduledDeductionMonth) {
+              if (currentYear > emp.scheduledDeductionYear || (currentYear === emp.scheduledDeductionYear && currentMonth >= emp.scheduledDeductionMonth)) {
+                  hGrade = Number(emp.scheduledHealthGrade); // 🌟 月変の新等級にすり替え！
+                  pGrade = Number(emp.scheduledPensionGrade);
+              }
+          } else if (emp.scheduledHealthGrade && emp.scheduledApplyYear && emp.scheduledApplyMonth) {
+              // 過去データ用の保険
+              if (currentYear > emp.scheduledApplyYear || (currentYear === emp.scheduledApplyYear && currentMonth >= emp.scheduledApplyMonth)) {
+                  hGrade = Number(emp.scheduledHealthGrade);
+                  pGrade = Number(emp.scheduledPensionGrade);
+              }
+          }
+          // 🌟🌟🌟 【差し替えここまで】 🌟🌟🌟
+          // 🟢🟢🟢 新しいコードここまで 🟢🟢🟢
+
 
 
 
@@ -4536,18 +4716,16 @@ if (!prevCompanyRates || Object.keys(prevCompanyRates).length === 0 || !prevComp
           let currentNursingPremium = record && record.nursingPremium !== undefined ? record.nursingPremium : socialInsurance.nursingPremium;
           
           // 💡 4. 会社負担額の合計にも介護保険を足す
-          // 💡 エンジンが計算してくれた「会社負担分（Comp）」を足すだけ！
-          let companyBurden = socialInsurance.healthPremiumComp + socialInsurance.nursingPremiumComp + socialInsurance.pensionPremiumComp;
+
  
           // ==========================================
           // 💡 NEW: 子育て関連の計算をここに追加！
           // ==========================================
           
-            // ① 子ども・子育て支援金（エンジンが正しく等級ベースで計算してくれた結果を受け取る！）
-            let childSupportEmp = record && record.childSupportEmp !== undefined 
+          // ① 子ども・子育て支援金（エンジンが正しく等級ベースで計算してくれた結果を受け取る！）
+          let childSupportEmp = record && record.childSupportEmp !== undefined 
             ? record.childSupportEmp 
             : (socialInsurance.childSupportPremium || 0);
-
             // 🌟 ここからデバッグ用のトラップをコピペ！
           if (empId === "000018" || empName.includes("山田10")) { // 山田10さんだけを狙い撃ち
             console.log(`=== 🕵️‍♂️ 山田10さんの子育て支援金デバッグ ===`);
@@ -4561,7 +4739,8 @@ if (!prevCompanyRates || Object.keys(prevCompanyRates).length === 0 || !prevComp
             let childSupportComp = socialInsurance.childSupportPremiumComp || 0;
 
             // ② 子ども・子育て拠出金（全額会社負担 / ここは厚年ベースなので、エンジンのstandardPensionを使います！）
-            let childContribution = Math.round((socialInsurance.standardPension || 0) * (companyRates.childContributionRate || 0));
+            // ✅ 修正後（専用エンジンを呼び出す！）
+　　　　　　　let childContribution = calcPremium((socialInsurance.standardPension || 0), (companyRates.childContributionRate || 0));
 
             let exemptBadgeHTML = "";
             if (isExempt) {
@@ -4573,7 +4752,7 @@ if (!prevCompanyRates || Object.keys(prevCompanyRates).length === 0 || !prevComp
             currentHealthPremium = 0;
             currentPensionPremium = 0;
             currentNursingPremium = 0;
-            companyBurden = 0;
+            // companyBurden = 0;
             childSupportEmp = 0;
             childSupportComp = 0;
             childContribution = 0;
@@ -4586,14 +4765,30 @@ if (!prevCompanyRates || Object.keys(prevCompanyRates).length === 0 || !prevComp
           // ※ すでにあるかもしれない let companyBurden = ... の行を探して、以下のように子育て支援金たちを足しこんでください。
           // 🌟🌟🌟 ここから追加：会社負担の免除フィルター 🌟🌟🌟
           // 💡 isExempt（免除フラグ）がONなら強制的に0円にする！
-          const healthComp = isExempt ? 0 : (socialInsurance?.healthPremiumComp || 0);
-          const nursingComp = isExempt ? 0 : (socialInsurance?.nursingPremiumComp || 0);
-          const pensionComp = isExempt ? 0 : (socialInsurance?.pensionPremiumComp || 0);
+          // 🟢 修正後（免除判定 ＋ DBの過去データ優先 を合体！）
+      
+          // 🟢 【修正】従業員額を強制使用する過去のハックを解除し、正しい会社負担額（Comp）を読み込む！
+          const healthComp = isExempt ? 0 : (record && record.healthPremiumComp !== undefined ? record.healthPremiumComp : (socialInsurance?.healthPremiumComp || 0));
+          const nursingComp = isExempt ? 0 : (record && record.nursingPremiumComp !== undefined ? record.nursingPremiumComp : (socialInsurance?.nursingPremiumComp || 0));
+          const pensionComp = isExempt ? 0 : (record && record.pensionPremiumComp !== undefined ? record.pensionPremiumComp : (socialInsurance?.pensionPremiumComp || 0));
           const safeChildSupport = isExempt ? 0 : (childSupportComp || 0);
           const safeChildContrib = isExempt ? 0 : (childContribution || 0);
+          // 🕵️‍♂️ 【データ出所徹底調査ログ】エラーを起こさない安全な記述です
+          console.log(`=== 🔍 デバッグ対象: ${empName} (ID: ${empId}) ===`);
+          console.log(`🔍 デバッグ対象 ① record:`, record);
+          console.log(`🔍 デバッグ対象 ② socialInsurance:`, socialInsurance);
+          console.log(`🔍 デバッグ対象 ③ healthComp:`, healthComp);
+          // 👇👇🌟 NEW: ポップアップ用に手動調整額を会社側にも足しこむ！ 🌟👇👇
+          const finalHealthComp = healthComp + (record?.insAdjustmentHealth || 0);
+          const finalNursingComp = nursingComp + (record?.insAdjustmentNursing || 0);
+          const finalPensionComp = pensionComp + (record?.insAdjustmentPension || 0);
+          const finalChildSupportComp = safeChildSupport + (record?.insAdjustmentSupport || 0);
 
-          // 💡 免除フィルターを通ったあとのキレイな変数で、改めて総合計を計算する
-          let totalCompanyBurden = healthComp + nursingComp + pensionComp + safeChildSupport + safeChildContrib;
+          // 💡 免除フィルターと手動調整を通ったあとのキレイな変数で、改めて総合計を計算する
+          let totalCompanyBurden = finalHealthComp + finalNursingComp + finalPensionComp + finalChildSupportComp + safeChildContrib;
+          // 👆👆🌟 ここまでNEW 🌟👆👆
+
+
 
           // 前月の「実際に天引きした実績データ」を探す
           const prevRecord = payrollRecords.find(r => r.employeeId === empId && r.year === prevYear && r.month === prevMonth);
@@ -4754,6 +4949,10 @@ let adjBadgeHTML = "";
 // ※もし empName でエラーが出たら、 emp.name や t.name などお使いの名前に変えてください
 // 💡 1. 会社負担専用の変数をリスト化してテキストを作る
 // 💡 1. 改行を「\\n」にするだけ！
+
+
+
+
 const companyBreakdownText = `【会社負担内訳】\\n`
   + `健康保険: ${healthComp.toLocaleString()}円\\n`
   + `介護保険: ${nursingComp.toLocaleString()}円\\n`
@@ -4878,11 +5077,11 @@ tr.innerHTML = `
     <span>介護保険:</span><span>${currentNursingPremium.toLocaleString()}円</span>
   </div>
   <div style="display:flex; justify-content:space-between; color:#555; font-size:11px;">
-    <span>厚生年金:</span><span>${currentPensionPremium.toLocaleString()}円</span>
+    <span>厚生年金:</span><span class="calc-pension-premium">${currentPensionPremium.toLocaleString()}円</span>
   </div>
   
   <div style="display:flex; justify-content:space-between; color:#856404; font-size:11px; margin-top: 2px;">
-    <span>子育て支援金:</span><span>${childSupportEmp.toLocaleString()}円</span>
+    <span>子育て支援金:</span><span class="calc-support-emp">${childSupportEmp.toLocaleString()}円</span>
   </div>
 
   <div style="display:flex; justify-content:space-between; font-weight:bold; color:#d32f2f; font-size:12px; margin-top:4px; padding-top:4px; border-top:1px dashed #ccc;">
@@ -4894,8 +5093,8 @@ tr.innerHTML = `
 </td>
 
 <td style="text-align: center; vertical-align: middle;">
-  <button class="btn-indiv-save" style="padding:4px 12px; font-size:12px; font-weight:bold; cursor:pointer; background:#0056b3; color:white; border:none; border-radius:4px;">保存</button><br>
-  <button class="btn-toggle-adjust" style="margin-top:8px; padding:3px 8px; font-size:11px; cursor:pointer; background:#fff; border:1px solid #ccc; border-radius:4px;">⚙️ 調整</button>
+  <button class="btn-indiv-save" style="${(window as any).isCurrentMonthLocked ? 'display: none;' : ''} padding:4px 12px; font-size:12px; font-weight:bold; cursor:pointer; background:#0056b3; color:white; border:none; border-radius:4px;">保存</button><br>
+  <button class="btn-toggle-adjust" style="${(window as any).isCurrentMonthLocked ? 'display: none;' : ''} margin-top:8px; padding:3px 8px; font-size:11px; cursor:pointer; background:#fff; border:1px solid #ccc; border-radius:4px;">⚙️ 調整</button>
 </td>
 `;
 tbody.appendChild(tr);
@@ -4905,38 +5104,82 @@ tbody.appendChild(tr);
 
 
 // 🌟 NEW: 月額給与用の「算定・月変特記事項メモパネル」
+// 🌟 NEW: 左右分割版「算定メモ ＆ 社保手動調整」パネル
 const adjustTr = document.createElement('tr');
 adjustTr.style.display = "none";
 adjustTr.innerHTML = `
-<td colspan="8" style="background: #f8f9fa; padding: 12px; border-bottom: 2px solid #dee2e6;">
-  <div style="display: flex; gap: 15px; align-items: center; font-size: 12px; justify-content: flex-end; flex-wrap: wrap;">
-    <strong style="color: #0056b3;">📝 算定・月変用の特記事項：</strong>
+<td colspan="8" style="background: #f8f9fa; padding: 15px; border-bottom: 2px solid #dee2e6;">
+  <div style="display: flex; gap: 20px; width: 100%; align-items: stretch;">
 
-    <label>理由:</label>
-    <select class="input-adj-reason" style="padding: 4px; border: 1px solid #ccc; border-radius: 4px;">
-      <option value="">-- 通常の給与 --</option>
-      <option value="sokyu" ${savedAdjReason === 'sokyu' ? 'selected' : ''}>遡及適用（ベースUP等の差額）</option>
-      <option value="chihai_past" ${savedAdjReason === 'chihai_past' ? 'selected' : ''}>過去分の遅配（単なる支払いズレ）</option>
-      <option value="miharai_now" ${savedAdjReason === 'miharai_now' ? 'selected' : ''}>当月分の未払い・遅配（算定除外）</option>
-      <option value="kyushoku" ${savedAdjReason === 'kyushoku' ? 'selected' : ''}>休職・一時帰休・ストライキ等（算定除外）</option>
-    </select>
+    <!-- 🟦 左側：算定・月変の特記事項（等級メモ） -->
+    <div style="flex: 1; background: #ffffff; border: 1px solid #ced4da; border-radius: 6px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+      <div style="margin-bottom: 10px; font-size: 13px;">
+        <strong style="color: #0056b3;">📝 算定・月変用の特記事項（今後の等級へのメモ）</strong>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center; font-size: 12px; flex-wrap: wrap;">
+        <label>理由:</label>
+        <select class="input-adj-reason" style="padding: 4px; border: 1px solid #ccc; border-radius: 4px;">
+          <option value="">-- 通常の給与 --</option>
+          <option value="sokyu" ${savedAdjReason === 'sokyu' ? 'selected' : ''}>遡及適用（ベースUP等の差額）</option>
+          <option value="chihai_past" ${savedAdjReason === 'chihai_past' ? 'selected' : ''}>過去分の遅配（単なる支払いズレ）</option>
+          <option value="miharai_now" ${savedAdjReason === 'miharai_now' ? 'selected' : ''}>当月分の未払い・遅配（算定除外）</option>
+          <option value="kyushoku" ${savedAdjReason === 'kyushoku' ? 'selected' : ''}>休職・一時帰休・ストライキ等（算定除外）</option>
+        </select>
 
-    <label>本来の月:</label>
-    <select class="input-adj-origin" style="padding: 4px; border: 1px solid #ccc; border-radius: 4px;">
-      <option value="">--</option>
-      <option value="1">1月分</option><option value="2">2月分</option><option value="3">3月分</option>
-      <option value="4">4月分</option><option value="5">5月分</option><option value="6">6月分</option>
-      <option value="7">7月分</option><option value="8">8月分</option><option value="9">9月分</option>
-      <option value="10">10月分</option><option value="11">11月分</option><option value="12">12月分</option>
-    </select>
+        <label>本来の月:</label>
+        <select class="input-adj-origin" style="padding: 4px; border: 1px solid #ccc; border-radius: 4px;">
+          <option value="">--</option>
+          <option value="1">1月分</option><option value="2">2月分</option><option value="3">3月分</option>
+          <option value="4">4月分</option><option value="5">5月分</option><option value="6">6月分</option>
+          <option value="7">7月分</option><option value="8">8月分</option><option value="9">9月分</option>
+          <option value="10">10月分</option><option value="11">11月分</option><option value="12">12月分</option>
+        </select>
 
-    <label>金額:</label>
-    <input type="number" class="input-adj-amount" value="${savedAdjAmount || ''}" placeholder="例: -50000" style="padding: 4px; width: 110px; border: 1px solid #ccc; border-radius: 4px; text-align: right;"> 円
+        <label>金額:</label>
+        <input type="number" class="input-adj-amount" value="${savedAdjAmount || ''}" placeholder="例: -50000" style="padding: 4px; width: 90px; border: 1px solid #ccc; border-radius: 4px; text-align: right;"> 円
 
-    <div style="display: flex; gap: 5px; margin-left: 10px;">
-      <button class="btn-apply-memo" style="padding: 4px 15px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">メモを反映</button>
-      <button class="btn-close-adjust" style="padding: 4px 15px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">✖ 閉じる</button>
+        <button class="btn-apply-memo" style="padding: 4px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: auto;">メモ反映</button>
+      </div>
     </div>
+
+    <!-- 🟧 右側：社会保険の手動調整（今月の天引き額変更） -->
+<div style="flex: 1; background: #fffcf8; border: 2px dashed #ff9800; border-radius: 6px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+      <div style="margin-bottom: 8px; font-size: 13px;">
+        <strong style="color: #d84315;">💰 社会保険・支援金 手動調整（追加・減額する差額を入力）</strong>
+      </div>
+      
+      <div style="display: flex; gap: 10px; align-items: center; font-size: 12px; margin-bottom: 8px;">
+        <label>理由:</label>
+        <select class="input-ins-reason" style="padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 180px;">
+          <option value="">-- 選択 --</option>
+          <option value="multi_month">入社等に伴う複数月徴収</option>
+          <option value="fraction">端数・差額の手動調整</option>
+          <option value="other">その他</option>
+        </select>
+      </div>
+
+      <div style="display: flex; gap: 6px; align-items: center; font-size: 11px; flex-wrap: wrap;">
+        <label>健保:</label>
+        <input type="number" class="input-ins-health" placeholder="例: 23147" style="padding: 4px; width: 60px; border: 1px solid #ccc; border-radius: 4px; text-align: right;">
+        
+        <label>厚年:</label>
+        <input type="number" class="input-ins-pension" placeholder="例: 43005" style="padding: 4px; width: 60px; border: 1px solid #ccc; border-radius: 4px; text-align: right;">
+        
+        <label>介護:</label>
+        <input type="number" class="input-ins-nursing" placeholder="例: 0" style="padding: 4px; width: 60px; border: 1px solid #ccc; border-radius: 4px; text-align: right;">
+
+        <label style="color: #b71c1c; font-weight: bold;">支援金:</label>
+        <input type="number" class="input-ins-support" placeholder="例: 268" style="padding: 4px; width: 60px; border: 1px solid #ccc; border-radius: 4px; text-align: right; border: 1px solid #b71c1c;">
+
+        <button class="btn-apply-ins" style="padding: 4px 10px; background: #ff9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: auto; font-size: 11px;">金額を反映</button>
+      </div>
+    </div>
+
+  </div>
+  
+  <!-- ✖ パネル全体を閉じるボタン（右下に配置） -->
+  <div style="text-align: right; margin-top: 12px;">
+    <button class="btn-close-adjust" style="padding: 5px 20px; background: #343a40; color: white; border: none; border-radius: 4px; cursor: pointer;">✖ 調整パネルを閉じる</button>
   </div>
 </td>
 `;
@@ -4964,6 +5207,31 @@ adjustTr.querySelector('.btn-apply-memo')?.addEventListener('click', () => {
   // 2. 処理が終わったら、邪魔にならないようにパネルを自動で閉じる！
   adjustTr.style.display = "none";
 });
+
+// 📝 既存：左側の「メモを反映」ボタン
+adjustTr.querySelector('.btn-apply-memo')?.addEventListener('click', () => {
+  const saveBtn = tr.querySelector('.btn-indiv-save') as HTMLButtonElement;
+  if (saveBtn) saveBtn.click();
+  adjustTr.style.display = "none";
+});
+
+// 💰 NEW：右側の「金額を反映」ボタン（一括対応版）
+adjustTr.querySelector('.btn-apply-ins')?.addEventListener('click', () => {
+  // 細かい入力値の取得と計算は青い保存ボタン側で行うので、
+  // ここはシンプルに青い保存ボタンを「ポチッ」と押すだけの役割にします！
+  const saveBtn = tr.querySelector('.btn-indiv-save') as HTMLButtonElement;
+  if (saveBtn) saveBtn.click();
+  
+  // 処理が終わったらパネルを閉じる
+  adjustTr.style.display = "none";
+});
+
+// ✖ 全体を閉じるボタン
+adjustTr.querySelector('.btn-close-adjust')?.addEventListener('click', () => {
+  adjustTr.style.display = "none";
+});
+
+
   
           // リアルタイム計算
           const daysInput = tr.querySelector('.input-days') as HTMLInputElement;
@@ -4971,6 +5239,7 @@ adjustTr.querySelector('.btn-apply-memo')?.addEventListener('click', () => {
           const nonFixedInput = tr.querySelector('.input-nonfixed') as HTMLInputElement;
           const totalSpan = tr.querySelector('.calc-total') as HTMLSpanElement;
           const saveBtn = tr.querySelector('.btn-indiv-save') as HTMLButtonElement;
+
           // ==========================================
           // 🗡️ ラスボスにトドメを刺す！（合算ボタンの処理）
           // ==========================================
@@ -5091,6 +5360,54 @@ saveBtn.addEventListener('click', async () => {
   saveBtn.disabled = true;
   try {
     const recordId = `${currentYear}_${currentMonth}_${empId}`;
+    
+    // =========================================================
+    // 🛡️ 確実化パッチ：画面の数字（valFixed）がマスタの合計と違う場合、
+    // 画面の数字を「基本給」として強制的に上書きし、手当をゼロにする！
+    // =========================================================
+    let finalBase = masterBase || 0;
+    let finalRole = masterRole || 0;
+    let finalFamily = masterFamily || 0;
+    let finalHousing = masterHousing || 0;
+    let finalFixedOt = masterFixedOt || 0;
+    let finalCommute = masterCommute || 0;
+    
+    const masterTotal = finalBase + finalRole + finalFamily + finalHousing + finalFixedOt + finalCommute;
+
+    if (valFixed > 0 && valFixed !== masterTotal) {
+        finalBase = valFixed; // 👈 画面の20万を基本給に全振り！
+        finalRole = 0;
+        finalFamily = 0;
+        finalHousing = 0;
+        finalFixedOt = 0;
+        finalCommute = 0;
+    }
+
+
+// 👇🌟 ここからNEW: 社会保険・支援金の手動調整（4項目版）を割り込ませる！ 🌟👇
+let finalHealth = currentHealthPremium;
+let finalPension = currentPensionPremium;
+let finalNursing = currentNursingPremium;
+let finalSupportEmp = childSupportEmp; // 🆕 支援金（本人負担）のバケツを用意！
+
+const insReason = (adjustTr.querySelector('.input-ins-reason') as HTMLSelectElement)?.value || "";
+
+// それぞれの入力欄から「追加したい金額」を取得（空欄なら0）
+const insHealthAmount = Number((adjustTr.querySelector('.input-ins-health') as HTMLInputElement)?.value) || 0;
+const insPensionAmount = Number((adjustTr.querySelector('.input-ins-pension') as HTMLInputElement)?.value) || 0;
+const insNursingAmount = Number((adjustTr.querySelector('.input-ins-nursing') as HTMLInputElement)?.value) || 0;
+const insSupportAmount = Number((adjustTr.querySelector('.input-ins-support') as HTMLInputElement)?.value) || 0; // 🆕 支援金の調整額取得
+
+// どこか1つでも入力されていたら、元の金額に足し算する！
+if (insHealthAmount !== 0 || insPensionAmount !== 0 || insNursingAmount !== 0 || insSupportAmount !== 0) {
+    finalHealth += insHealthAmount;
+    finalPension += insPensionAmount;
+    finalNursing += insNursingAmount;
+    finalSupportEmp += insSupportAmount; // 🆕 支援金に足し算
+    console.log(`💰 社保・支援金個別調整！ 健保:+${insHealthAmount}, 厚年:+${insPensionAmount}, 介護:+${insNursingAmount}, 支援金:+${insSupportAmount}`);
+}
+// 👆🌟 ここまでNEW 🌟👆
+    
     await setDoc(doc(db, "monthly_payroll_records", recordId), {
       employeeId: empId, 
       companyId: currentCompanyId,
@@ -5105,26 +5422,68 @@ saveBtn.addEventListener('click', async () => {
       retroPensionAmount: retroPensionDiff,
       retroChildAmount: retroChildDiff,
       retroApplied: true,
-      healthPremium: currentHealthPremium,     // 健保
-      nursingPremium: currentNursingPremium,   // 介護
-      pensionPremium: currentPensionPremium,   // 厚年
-      childSupportEmp: childSupportEmp,        // 子育て支援金（本人負担）
+
+      // 👇 ここを currentXXX から finalXXX に書き換える！ 👇
+      healthPremium: finalHealth,      // 健保（手動調整込み）
+      nursingPremium: finalNursing,    // 介護（手動調整込み）
+      pensionPremium: finalPension,    // 厚年（手動調整込み）
+      // 👇👇🔥 ここに追加！会社負担分も絶対にタッパーに詰める！ 🔥👇👇
+      healthPremiumComp: healthComp + insHealthAmount,
+      nursingPremiumComp: nursingComp + insNursingAmount,
+      pensionPremiumComp: pensionComp + insPensionAmount,
+      supportPremiumComp: safeChildSupport + insSupportAmount,
+      // 👆👆🔥 追加ここまで 🔥👆👆
+
+      childSupportEmp: finalSupportEmp,        // 子育て支援金（本人負担）
+      // 👇🚨 ここに新しく「支援金」の保存を追加！！ 👇
+      supportPremium: safeChildSupport,  // 子ども・子育て支援金 (労使折半)
       updatedAt: new Date(),
+
       adjustmentAmount: adjAmount,
       adjustmentReason: adjReason,
       adjustmentOriginMonth: adjOrigin, // 💡 NEW: 本来の月もFirebaseに保存！
 
+      // 👇 NEW: 社保の手動調整履歴もFirestoreに残しておく！（後で原因調査できるように） 👇
+      insAdjustmentReason: insReason,
+      insAdjustmentHealth: insHealthAmount,   // 健保の調整額
+      insAdjustmentPension: insPensionAmount, // 厚年の調整額
+      insAdjustmentNursing: insNursingAmount, // 介護の調整額
+      insAdjustmentSupport: insSupportAmount, // 🆕 支援金の履歴を追加！
       // =========================================================
       // 🌟 NEW: 過去月ブロック（スナップショット）機能！
       // 保存した瞬間のマスタの基本給・手当をそのままの姿で焼き付ける！
       // =========================================================
-      baseSalary: masterBase,
-      allowanceRole: masterRole,
-      allowanceFamily: masterFamily,
-      allowanceHousing: masterHousing,
-      allowanceFixedOt: masterFixedOt,
-      allowanceCommute: masterCommute
+      baseSalary: finalBase,
+      allowanceRole: finalRole,
+      allowanceFamily: finalFamily,
+      allowanceHousing: finalHousing,
+      allowanceFixedOt: finalFixedOt,
+      allowanceCommute: finalCommute
     }, { merge: true });
+
+
+// =========================================================
+    // 🌟 NEW: リロード不要！画面上の社保・支援金額も即座に書き換える魔法（4項目版）
+    // =========================================================
+    const healthSpan = tr.querySelector('.calc-health-premium') as HTMLSpanElement;
+    const pensionSpan = tr.querySelector('.calc-pension-premium') as HTMLSpanElement;
+    const nursingSpan = tr.querySelector('.calc-nursing-premium') as HTMLSpanElement;
+    const supportEmpSpan = tr.querySelector('.calc-support-emp') as HTMLSpanElement; // 🆕 支援金の宛先を取得
+    const totalEmpSpan = tr.querySelector('.calc-total-emp') as HTMLSpanElement;
+
+    if (healthSpan) healthSpan.innerText = finalHealth.toLocaleString();
+    if (pensionSpan) pensionSpan.innerText = finalPension.toLocaleString();
+    if (nursingSpan) nursingSpan.innerText = finalNursing.toLocaleString();
+    if (supportEmpSpan) supportEmpSpan.innerText = finalSupportEmp.toLocaleString(); // 🆕 支援金の画面書き換え
+
+    // 本人負担の合計額も、調整後の支援金（finalSupportEmp）を含めて再計算！
+    if (totalEmpSpan) {
+        const newTotalEmp = finalHealth + finalPension + finalNursing + finalSupportEmp;
+        totalEmpSpan.innerText = newTotalEmp.toLocaleString();
+    }
+
+
+    
 
     // 🌟 2. 画面上の「総支給額」の表示も最新の金額に書き換える！
     const totalCell = tr.querySelector('.calc-total-cell') as HTMLTableCellElement;
@@ -5286,7 +5645,10 @@ saveBtn.addEventListener('click', async () => {
       // 👆==== ここまで追加 ====👆
     // 【B】虫眼鏡の叩き起こし魔法（給与タブ用）
     document.getElementById('search-salary-emp')?.dispatchEvent(new Event('input'));
-    };
+    
+
+
+  };
 
     // 💡 修正2：「給与」タブがクリックされたら、毎回最新データで画面を再構築する！
     const salaryTabBtn = document.querySelector('[data-tab="tab-salary"]');
@@ -5341,12 +5703,18 @@ saveBtn.addEventListener('click', async () => {
     newPrevBtn?.addEventListener('click', () => {
       currentMonth--;
       if (currentMonth < 1) { currentMonth = 12; currentYear--; }
+      // 🚨 【ここに2行追加！】
+      localStorage.setItem('saved_salary_month', currentMonth.toString());
+      localStorage.setItem('saved_salary_year', currentYear.toString());
       loadMonthlyData(); // 🔄 月を変えたらデータを再読み込み！
     });
   
     newNextBtn?.addEventListener('click', () => {
       currentMonth++;
       if (currentMonth > 12) { currentMonth = 1; currentYear++; }
+      // 🚨 【ここに2行追加！】
+      localStorage.setItem('saved_salary_month', currentMonth.toString());
+      localStorage.setItem('saved_salary_year', currentYear.toString());
       loadMonthlyData(); // 🔄 月を変えたらデータを再読み込み！
     });
   
@@ -5358,20 +5726,23 @@ saveBtn.addEventListener('click', async () => {
       // ==========================================
       // 📥 【機能③】e-Gov用 CSVのリアル・ダウンロード機能
       // ==========================================
-      // 📥 e-Gov用 CSV出力ボタン（随時改定タブ版にアップデート！）
-      document.getElementById('btn-export-egov-geppen')?.addEventListener('click', () => {
-        // 🌟 1. 随時改定タブの「プルダウン」から対象の年月を取得する
-        const targetSelect = document.getElementById('zuiji-target-month') as HTMLSelectElement;
-        const revisionMonth = Number(targetSelect?.value || 7);
-        const optionText = targetSelect.options[targetSelect.selectedIndex]?.text || "";
-        const revisionYear = parseInt(optionText.match(/\d{4}/)?.[0] || String(new Date().getFullYear()));
+      // 📥 e-Gov用 CSV出力ボタン（ファントム退治版！）
+      const btnExportGeppen = document.getElementById('btn-export-egov-geppen') as HTMLButtonElement;
+      if (btnExportGeppen) {
+        // 🌟 addEventListener をやめて onclick に変更（絶対に1回しか発動しない！）
+        btnExportGeppen.onclick = () => {
+          // 🌟 1. 随時改定タブの「プルダウン」から対象の年月を取得する
+          const targetSelect = document.getElementById('zuiji-target-month') as HTMLSelectElement;
+          const revisionMonth = Number(targetSelect?.value || 7);
+          const optionText = targetSelect.options[targetSelect.selectedIndex]?.text || "";
+          const revisionYear = parseInt(optionText.match(/\d{4}/)?.[0] || String(new Date().getFullYear()));
 
-        console.log(`📥 ${revisionYear}年${revisionMonth}月 改定予定のe-Gov CSVを出力します...`);
+          console.log(`📥 ${revisionYear}年${revisionMonth}月 改定予定のe-Gov CSVを出力します...`);
 
-        // 🌟 2. 古い長ったらしいコードは全部消して、最強エンジンを呼び出すだけ！
-        // （プルダウンで選んだ年・月をエンジンに渡す）
-        downloadGeppenCSV(revisionYear, revisionMonth);
-      });
+          // 🌟 2. 古い長ったらしいコードは全部消して、最強エンジンを呼び出すだけ！
+          downloadGeppenCSV(revisionYear, revisionMonth);
+        };
+      }
   
 // ==========================================
 // 🚀 給与CSVインポートエンジン（内訳フル連動版）
@@ -5419,7 +5790,7 @@ if (csvInput) {
           const nonFixed = cols[8]?.trim(); 
           
           if (!targetId) continue;
-          const targetRow = document.querySelector(`tr[data-emp-id="${targetId}"]`);
+          const targetRow = document.querySelector(`tr[data-emp-id="${targetId}"]`) as HTMLElement;
           
           if (targetRow) {
              // 1. 固定賃金の合計をここで計算！
@@ -5429,7 +5800,18 @@ if (csvInput) {
              (targetRow.querySelector('.input-days') as HTMLInputElement).value = days || "0";
              (targetRow.querySelector('.input-fixed') as HTMLInputElement).value = String(totalFixed);
              (targetRow.querySelector('.input-nonfixed') as HTMLInputElement).value = nonFixed || "0";
-             
+             // =========================================================
+             // 🌟 修正：保存ボタンが読み取る「裏の隠しデータ」も一緒に上書きする！
+             // =========================================================
+             targetRow.dataset.baseSalary = String(base);
+             targetRow.dataset.allowanceRole = String(role);
+             targetRow.dataset.allowanceFamily = String(family);
+             targetRow.dataset.allowanceHousing = String(housing);
+             targetRow.dataset.allowanceFixedOt = String(fixedOt);
+             targetRow.dataset.allowanceCommute = String(commute);
+             targetRow.dataset.fixedWage = String(totalFixed);
+             // 非固定賃金も忘れずに！
+             targetRow.dataset.nonFixedWage = nonFixed || "0";
              // 再計算のトリガーを引く
              (targetRow.querySelector('.input-days') as HTMLInputElement).dispatchEvent(new Event('input'));
              
@@ -5594,16 +5976,21 @@ if (masterCsvInput) {
         btnSaveMonthly.parentNode?.replaceChild(newBtnSaveMonthly, btnSaveMonthly);
  
         newBtnSaveMonthly.addEventListener('click', async () => {
+
+
+          console.log("🔘 確定ボタンが物理的にクリックされました！");
+          console.log("🔒 現在のロック判定メモ:", (window as any).isCurrentMonthLocked);
+
+  
+          // 👇 【NEW】絶対防御1：もしロック状態のメモがあれば、ここで強制終了！
+          if ((window as any).isCurrentMonthLocked) return;
           const alertBox = document.getElementById('monthly-change-alert');
           const alertList = document.getElementById('alert-list');
- 
+
           newBtnSaveMonthly.innerText = "⏳ データを保存中...";
           newBtnSaveMonthly.disabled = true;
- 
+
           try {
-              // =========================================================
-              // 🌟 修正1：バッチ保存をやめ、完璧な個別保存ボタンを一斉クリック！
-              // =========================================================
               const individualSaveBtns = document.querySelectorAll('.btn-indiv-save'); 
               if (individualSaveBtns.length === 0) {
                   alert("保存できるデータがありません。");
@@ -5611,16 +5998,59 @@ if (masterCsvInput) {
                   newBtnSaveMonthly.disabled = false;
                   return;
               }
- 
-              // 全員の個別保存ボタン（保険料計算済みの完璧なコード）を一斉発動！
+
+              // 全員の個別保存ボタンを一斉発動！
               individualSaveBtns.forEach(btn => {
                   (btn as HTMLButtonElement).click();
               });
- 
-              // 🌟 修正2：個別保存の完了（Firestoreへの書き込み）を確実に待つ
-              // （これをしないと、直後のタスク検知ロジックが古いデータを読み込んでしまうため）
-              await new Promise(resolve => setTimeout(resolve, 1500));
- 
+
+              // 個別保存の完了を待つ
+              await new Promise(resolve => setTimeout(resolve, 3000));
+
+              // =========================================================
+              // 🚨 完全修正：絶対に失敗しないバッチ処理でロックチケットを保存！
+              // =========================================================
+              const cid = localStorage.getItem('current_company_id');
+              if (cid) {
+                  const statusDocId = `${cid}_${currentYear}_${currentMonth}`;
+                  const batch = writeBatch(db); // import済みの確実なメソッドを使用！
+                  const statusRef = doc(db, 'payroll_status', statusDocId);
+                  
+                  batch.set(statusRef, {
+                      companyId: cid,
+                      year: currentYear,
+                      month: currentMonth,
+                      isConfirmed: true,
+                      confirmedAt: new Date()
+                  }, { merge: true });
+                  
+                  await batch.commit(); // DBに書き込み実行！
+                  console.log(`🔒 ${currentYear}年${currentMonth}月のロックチケットをDBに発行しました！`);
+              }
+              // =========================================================
+
+              // // 画面のボタンをグレーにしてロック
+              // newBtnSaveMonthly.innerText = "🔒 この月の実績は確定済みです";
+              // newBtnSaveMonthly.style.backgroundColor = "#6c757d"; 
+              // newBtnSaveMonthly.style.cursor = "not-allowed";
+
+              // // 👇 【NEW】絶対防御2：ボタンへのクリック判定自体をCSSで消滅させる！
+              // newBtnSaveMonthly.style.pointerEvents = "none"; 
+              // // 👇 ロック完了のメモを残す（これがあれば絶対防御1で弾かれる）
+              // (window as any).isCurrentMonthLocked = true;
+
+              // individualSaveBtns.forEach(btn => {
+              //     (btn as HTMLButtonElement).style.display = "none"; 
+              // });
+              // const adjustBtns = document.querySelectorAll('.btn-toggle-adjust');
+              // adjustBtns.forEach(btn => {
+              //     (btn as HTMLButtonElement).style.display = "none";
+              // });
+
+              // alert("✅ 全員の給与データを保存し、この月を「確定」としてロックしました！");
+
+
+
               // =========================================================
               // 🌟 ここから下は竹高さんの「随時改定検知＆タスク生成ロジック」を完全再現！
               // =========================================================
@@ -5692,9 +6122,11 @@ if (masterCsvInput) {
           } catch (error) {
               console.error("月額給与の一括保存中にエラー:", error);
               alert(`保存中にエラーが発生しました。通信環境を確認してください。`);
-          } finally {
+              // 👇 エラーで失敗した時「だけ」ボタンを青色に戻してやり直せるようにする
               newBtnSaveMonthly.innerText = "💾 この月の実績を確定する（一括保存）";
               newBtnSaveMonthly.disabled = false;
+              newBtnSaveMonthly.style.backgroundColor = "#0056b3"; 
+              newBtnSaveMonthly.style.pointerEvents = "auto";
           }
       });
     }
@@ -5863,7 +6295,7 @@ try {
             r.employeeId === empId && 
             r.paymentDate >= "2026-04-01" && 
             r.paymentDate <= "2027-03-31" &&
-            r.paymentDate !== currentPaymentDate
+            r.paymentDate < currentPaymentDate
           );
           const cumulativeHealthBonus = pastRecords.reduce((sum, r) => sum + (r.healthTarget || 0), 0);
           const remainingHealthLimit = Math.max(0, HEALTH_BONUS_MAX - cumulativeHealthBonus);
@@ -5970,9 +6402,15 @@ try {
               <div style="font-size: 10px; color: #999;">ID: ${empId}</div>
             </td>
             
-            <td style="vertical-align: middle;">
-              <span style="color:#0056b3; font-weight:bold;">${cumulativeHealthBonus.toLocaleString()} 円</span><br>
-              <span style="font-size:10px; color:#666;">(上限573万まで残り: ${remainingHealthLimit.toLocaleString()}円)</span>
+            <td style="vertical-align: middle; min-width: 150px;">
+              <div style="font-size: 11px; color: #555;">前回までの累計: ${cumulativeHealthBonus.toLocaleString()} 円</div>
+              <div style="margin-top: 4px;">
+                <span style="font-size: 10px; color: #0056b3; font-weight: bold;">▶ 反映後の累計:</span><br>
+                <span class="calc-new-cumulative" style="color: #0056b3; font-weight: bold; font-size: 14px;">0</span> <span style="color: #0056b3; font-size: 12px;">円</span>
+              </div>
+              <div style="font-size: 10px; color: #888; margin-top: 2px;">
+                (上限573万まで残り: <span class="calc-new-remaining">0</span> 円)
+              </div>
               ${bonusAlertBadge} 
             </td>
             
@@ -6026,73 +6464,174 @@ try {
           const careTargetSpan = tr.querySelector('.calc-care-target') as HTMLSpanElement;
           const childSupportSpan = tr.querySelector('.calc-child-support') as HTMLSpanElement;
   
-          // 💡 2. リアルタイム計算エンジンの進化版（2026年 法改正＆介護対象対応！）
-          const calcBonusPremium = () => {
-            const currentBonus = Number(bonusInput.value) || 0;
-            
-            // 標準賞与額（1000円未満切り捨て）
-            const standardBonus = Math.floor(currentBonus / 1000) * 1000;
-            
-            // 上限ストッパーの判定（竹高さんの元のロジック）
-            const targetHealthBonus = Math.min(standardBonus, remainingHealthLimit);
-            const targetPensionBonus = Math.min(standardBonus, PENSION_BONUS_MAX);
-
-            // 💡 【重要】ボーナス支給月基準で年齢を計算
-            const paymentDate = new Date(currentPaymentDate);
-            const bonusYear = paymentDate.getFullYear();
-            const bonusMonth = paymentDate.getMonth() + 1;
-            const empAge = calculateAgeForPayroll(emp.birthdate, bonusYear, bonusMonth);
-            
-            // 💡 介護対象の判定と、介護対象額の計算
-            const isNursingTarget = empAge >= 40 && empAge < 65;
-            const targetCareBonus = isNursingTarget ? targetHealthBonus : 0; // 40歳未満は対象額0円！
-
-            // 💡 3. 各保険料の計算（ハイブリッド型）
-            const hPremium = Math.round(targetHealthBonus * companyRates.healthRateEmp);
-            const pPremium = Math.round(targetPensionBonus * (companyRates.pensionRate / 2));
-            const cPremium = Math.round(targetCareBonus * companyRates.nursingRateEmp);
-
+        // 💡 2. リアルタイム計算エンジンの進化版（同月内合算ルール対応！）
+        const calcBonusPremium = () => {
+          const currentBonus = Number(bonusInput.value) || 0;
+          
+// ==========================================
+            // 🚨 【修正】同月内合算ルール（千円未満切り捨ての補正）
             // ==========================================
-            // 💡 NEW: 子育て関連の計算
-            // ==========================================
-            const childSupportEmp = Math.round(targetHealthBonus * (companyRates.childSupportRateEmp || 0));
-            const childSupportComp = Math.round(targetHealthBonus * (companyRates.childSupportRateComp || 0));
-            const childContribution = Math.round(targetPensionBonus * (companyRates.childContributionRate || 0));
+            // 1. 同月内の「過去の支給日」の保存済みデータを抽出
+            const sameMonthRecords = allBonusRecords.filter(r => {
+              if (String(r.employeeId) !== String(empId)) return false;
+              
+              // 🌟 【修正】「今開いている日より未来、または同じ日」のデータは除外
+              if (r.paymentDate >= currentPaymentDate) return false; 
+              
+              // 年月が一致するかチェック
+              const rDate = r.paymentDate.split('-');
+              const currDate = currentPaymentDate.split('-');
+              return rDate[0] === currDate[0] && rDate[1] === currDate[1];
+          });
 
-            // 💡 本人負担合計（子育て支援金を追加！）
-            const totalPremium = hPremium + cPremium + pPremium + childSupportEmp;
+          // 2. 同月内の過去分の合計を出す
+          const sameMonthPastBonus = sameMonthRecords.reduce((sum, r) => sum + (Number(r.bonusWage) || 0), 0);
+          const sameMonthPastHealthTarget = sameMonthRecords.reduce((sum, r) => sum + (Number(r.healthTarget) || 0), 0);
+          const sameMonthPastPensionTarget = sameMonthRecords.reduce((sum, r) => sum + (Number(r.pensionTarget) || 0), 0);
 
-            // 会社負担分も別で計算する
-            const hPremiumComp = Math.round(targetHealthBonus * companyRates.healthRateComp);
-            const pPremiumComp = Math.round(targetPensionBonus * (companyRates.pensionRate / 2));
-            const cPremiumComp = Math.round(targetCareBonus * companyRates.nursingRateComp);
+          // 3. 今回の入力額と合わせて「同月の総支給額」を計算
+          const totalMonthBonus = currentBonus + sameMonthPastBonus;
 
-            // 💡 会社負担合計（子育ての会社負担分と、拠出金を追加！）
-            const companyBurden = hPremiumComp + cPremiumComp + pPremiumComp + childSupportComp + childContribution;
+          // 4. 法律ルール：総支給額を合算してから「千円未満切り捨て」！
+          const totalStandardBonus = Math.floor(totalMonthBonus / 1000) * 1000;
 
-            // ==========================================
-            // 💡 4. 計算結果をHTML（画面）に流し込む！
-            // ==========================================
-            
-            // 対象額の表示更新
-            const healthTargetSpan = tr.querySelector('.calc-health-target'); // 取得漏れ防止でここで直接取得
-            if (healthTargetSpan) healthTargetSpan.innerHTML = targetHealthBonus.toLocaleString();
-            if (careTargetSpan) careTargetSpan.innerHTML = targetCareBonus.toLocaleString();
-            if (pensionTargetSpan) pensionTargetSpan.innerHTML = targetPensionBonus.toLocaleString();
+          // 5. 今回の計算に使うベース対象額 ＝ 正しい総標準賞与額 － 同月内ですでに処理した対象額
+          const baseHealthTarget = Math.max(0, totalStandardBonus - sameMonthPastHealthTarget);
+          const basePensionTarget = Math.max(0, totalStandardBonus - sameMonthPastPensionTarget);
 
-            // 保険料の表示更新
-            if (healthPremiumSpan) healthPremiumSpan.innerText = hPremium.toLocaleString();
-            if (carePremiumSpan) carePremiumSpan.innerText = cPremium.toLocaleString();
-            if (pensionPremiumSpan) pensionPremiumSpan.innerText = pPremium.toLocaleString();
-            
-            // 💡 NEW: 支援金の表示更新
-            if (childSupportSpan) childSupportSpan.innerText = childSupportEmp.toLocaleString(); 
-            
-            // 合計の表示更新
-            if (totalPremiumSpan) totalPremiumSpan.innerText = totalPremium.toLocaleString();
-            if (companyBurdenSpan) companyBurdenSpan.innerText = companyBurden.toLocaleString();
-          };
+          // 🌟 UI改善：分かりにくかったバッジの表記をスッキリ変更！
+          let combineAlertHtml = "";
+          if (sameMonthRecords.length > 0) {
+              combineAlertHtml = `<br><span style="display:inline-block; margin-top:4px; padding: 2px 6px; background-color: #e0f2fe; color: #0369a1; border-radius: 4px; font-size: 10px; font-weight: bold;">🔄 同月合算(端数調整済)</span>`;
+          }
+        // ==========================================
 
+        // 上限ストッパーの判定（合算ベース額に対して適用）
+        // ※健康保険は「年度上限573万」のストッパー
+        const targetHealthBonus = Math.min(baseHealthTarget, remainingHealthLimit);
+        // ※厚生年金は「同月内上限150万」のストッパー
+        const targetPensionBonus = Math.min(basePensionTarget, Math.max(0, PENSION_BONUS_MAX - sameMonthPastPensionTarget));
+
+        // 💡 【重要】ボーナス支給月基準で年齢を計算
+        const paymentDate = new Date(currentPaymentDate);
+        const bonusYear = paymentDate.getFullYear();
+        const bonusMonth = paymentDate.getMonth() + 1;
+        const empAge = calculateAgeForPayroll(emp.birthdate, bonusYear, bonusMonth);
+        
+        // 💡 介護対象の判定と、介護対象額の計算
+        const isNursingTarget = empAge >= 40 && empAge < 65;
+        const targetCareBonus = isNursingTarget ? targetHealthBonus : 0; // 40歳未満は対象額0円！
+
+// 💡 3. 各保険料の計算（竹高さん発案：保険料ベースの差額調整！）
+
+// ① 【総額】に対する保険料を計算する（総対象額 × 料率）
+const totalHealthTarget = sameMonthPastHealthTarget + targetHealthBonus;
+const totalPensionTarget = sameMonthPastPensionTarget + targetPensionBonus;
+const totalCareTarget = isNursingTarget ? totalHealthTarget : 0;
+
+// 💡 【総額】に対する保険料を計算する
+const totalHealthPremium = calcPremium(totalHealthTarget, companyRates.healthRateEmp);
+const totalPensionPremium = calcPremium(totalPensionTarget, (companyRates.pensionRate / 2));
+const totalCarePremium = calcPremium(totalCareTarget, companyRates.nursingRateEmp);
+
+// 💡 【過去分】の保険料を計算する
+const pastHealthPremium = calcPremium(sameMonthPastHealthTarget, companyRates.healthRateEmp);
+const pastPensionPremium = calcPremium(sameMonthPastPensionTarget, (companyRates.pensionRate / 2));
+const pastCarePremium = calcPremium((isNursingTarget ? sameMonthPastHealthTarget : 0), companyRates.nursingRateEmp);
+
+// ③ 【今回】の保険料 ＝ 総保険料 － 過去分保険料（※これで端数の1円ズレが完全に消滅！）
+const hPremium = totalHealthPremium - pastHealthPremium;
+const pPremium = totalPensionPremium - pastPensionPremium;
+const cPremium = totalCarePremium - pastCarePremium;
+
+          // ==========================================
+          // 💡 NEW: 子育て・会社負担の計算（こちらも総額ベースで差額引き算！）
+          // ==========================================
+          // 子育て支援金（本人・会社）と拠出金
+          const totalChildSupportEmp = calcPremium(totalHealthTarget, (companyRates.childSupportRateEmp || 0));
+          const pastChildSupportEmp = calcPremium(sameMonthPastHealthTarget, (companyRates.childSupportRateEmp || 0));
+          const childSupportEmp = totalChildSupportEmp - pastChildSupportEmp;
+
+// ==========================================
+          // 💡 NEW: 会社負担の計算（★総額から本人負担を引く絶対法則！）
+          // ==========================================
+          
+          // 1️⃣ 子ども・子育て支援金（会社負担）
+          const statutoryTotalChildSupport = Math.floor(totalHealthTarget * ((companyRates.childSupportRateEmp || 0) + (companyRates.childSupportRateComp || 0)));
+          const statutoryPastChildSupport = Math.floor(sameMonthPastHealthTarget * ((companyRates.childSupportRateEmp || 0) + (companyRates.childSupportRateComp || 0)));
+          const totalChildSupportComp = statutoryTotalChildSupport - totalChildSupportEmp;
+          const pastChildSupportComp = statutoryPastChildSupport - pastChildSupportEmp;
+          const childSupportComp = totalChildSupportComp - pastChildSupportComp;
+
+          // 2️⃣ 子ども・子育て拠出金（※会社が100%全額負担。引き算不要のMath.floor！）
+          const totalChildContribution = Math.floor(totalPensionTarget * (companyRates.childContributionRate || 0));
+          const pastChildContribution = Math.floor(sameMonthPastPensionTarget * (companyRates.childContributionRate || 0));
+          const childContribution = totalChildContribution - pastChildContribution;
+
+          // 3️⃣ 健康保険（会社負担）
+          // 総額(全体の料率)をMath.floorで出し、すでに上の行で計算済みの本人分(Premium)を引く！
+          const statutoryTotalHealth = Math.floor(totalHealthTarget * (companyRates.healthRateEmp + companyRates.healthRateComp));
+          const statutoryPastHealth = Math.floor(sameMonthPastHealthTarget * (companyRates.healthRateEmp + companyRates.healthRateComp));
+          const totalHealthComp = statutoryTotalHealth - totalHealthPremium; 
+          const pastHealthComp = statutoryPastHealth - pastHealthPremium;
+          const hPremiumComp = totalHealthComp - pastHealthComp;
+
+          // 4️⃣ 厚生年金（会社負担）※pensionRateは全体の料率（18.3%）
+          const statutoryTotalPension = Math.floor(totalPensionTarget * companyRates.pensionRate);
+          const statutoryPastPension = Math.floor(sameMonthPastPensionTarget * companyRates.pensionRate);
+          const totalPensionComp = statutoryTotalPension - totalPensionPremium;
+          const pastPensionComp = statutoryPastPension - pastPensionPremium;
+          const pPremiumComp = totalPensionComp - pastPensionComp;
+
+          // 5️⃣ 介護保険（会社負担）
+          const statutoryTotalCare = Math.floor(totalCareTarget * (companyRates.nursingRateEmp + companyRates.nursingRateComp));
+          const statutoryPastCare = Math.floor((isNursingTarget ? sameMonthPastHealthTarget : 0) * (companyRates.nursingRateEmp + companyRates.nursingRateComp));
+          const totalCareComp = statutoryTotalCare - totalCarePremium;
+          const pastCareComp = statutoryPastCare - pastCarePremium;
+          const cPremiumComp = totalCareComp - pastCareComp;
+
+          // 💡 本人負担・会社負担の合計を出す
+          const totalPremium = hPremium + cPremium + pPremium + childSupportEmp;
+          const companyBurden = hPremiumComp + cPremiumComp + pPremiumComp + childSupportComp + childContribution;
+
+        // ==========================================
+        // 💡 4. 計算結果をHTML（画面）に流し込む！
+        // ==========================================
+        
+        // 対象額の表示更新（合算バッジを一緒に表示！）
+        const healthTargetSpan = tr.querySelector('.calc-health-target'); 
+        if (healthTargetSpan) healthTargetSpan.innerHTML = `${targetHealthBonus.toLocaleString()} ${combineAlertHtml}`;
+        
+        if (careTargetSpan) careTargetSpan.innerHTML = targetCareBonus.toLocaleString();
+        if (pensionTargetSpan) pensionTargetSpan.innerHTML = targetPensionBonus.toLocaleString();
+
+        // 保険料の表示更新
+        if (healthPremiumSpan) healthPremiumSpan.innerText = hPremium.toLocaleString();
+        if (carePremiumSpan) carePremiumSpan.innerText = cPremium.toLocaleString();
+        if (pensionPremiumSpan) pensionPremiumSpan.innerText = pPremium.toLocaleString();
+        
+        // 💡 NEW: 支援金の表示更新
+        if (childSupportSpan) childSupportSpan.innerText = childSupportEmp.toLocaleString(); 
+        
+        // 合計の表示更新
+        if (totalPremiumSpan) totalPremiumSpan.innerText = totalPremium.toLocaleString();
+        if (companyBurdenSpan) companyBurdenSpan.innerText = companyBurden.toLocaleString();
+
+        // 🌟🌟🌟 ここを追加！！リアルタイム累計・残枠の更新 🌟🌟🌟
+        const newCumulative = cumulativeHealthBonus + targetHealthBonus;
+        const newRemaining = Math.max(0, HEALTH_BONUS_MAX - newCumulative);
+
+        const newCumulativeSpan = tr.querySelector('.calc-new-cumulative');
+        if (newCumulativeSpan) newCumulativeSpan.innerHTML = newCumulative.toLocaleString();
+
+        const newRemainingSpan = tr.querySelector('.calc-new-remaining');
+        if (newRemainingSpan) newRemainingSpan.innerHTML = newRemaining.toLocaleString();
+
+      };
+
+
+
+          
           bonusInput.addEventListener('input', calcBonusPremium);
           calcBonusPremium(); // 初期表示時にも1回実行しておく
   
@@ -6366,8 +6905,36 @@ if (searchBonusEmp) {
 async function initSanteiUI() {
     const tbody = document.getElementById('santei-list-body');
     if (!tbody) return;
+
+// 🌟🌟🌟 【完全版】プルダウンの選択肢を自動生成するエンジン 🌟🌟🌟
+const yearSelect = document.getElementById('santei-target-year') as HTMLSelectElement;
+
+// プルダウンが空っぽの時だけ、選択肢を作る（二重作成の防止）
+if (yearSelect && yearSelect.options.length === 0) {
+    const currentYear = new Date().getFullYear(); // PCの時計から「今年の年」を自動取得！
+    
+    // 過去2年 〜 未来1年 までの選択肢をループで自動生成
+    for (let y = currentYear - 2; y <= currentYear + 1; y++) {
+        const option = document.createElement('option');
+        option.value = String(y);
+        option.text = `${y}年度`;
+        
+        // 今の年（今年は2026年）をデフォルトで選択状態（selected）にする
+        if (y === currentYear) {
+            option.selected = true;
+        }
+        
+        yearSelect.appendChild(option);
+    }
+}
+
+
+
     // 🌟🌟🌟 ① ここから箱（関数）を作り始める！ 🌟🌟🌟
     const loadSanteiData = async () => {
+
+    // ここで選ばれている年を変数に入れて、この後の計算に使う！
+    const targetYear = Number(yearSelect.value);
 
     tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 20px; color: #666;">🔄 Firebaseから4月〜6月の給与実績を読み込み中...</td></tr>`;
   
@@ -6464,22 +7031,58 @@ async function initSanteiUI() {
         return idA.localeCompare(idB, undefined, { numeric: true });
     });
     // =========================================================
+
+
+    // 👇＝＝＝ ここから追加（7・8・9月の月変を裏側で先読み予測！） ＝＝＝👇
+    let zuijiExcludeIds: string[] = [];
+    if (typeof getZuijiTargets === 'function') {
+        // 算定画面を開いた瞬間に、裏側で7・8・9月の随時改定対象者をシミュレーション！
+        const z7 = getZuijiTargets(targetYear, 7, employees, payrollRecords);
+        const z8 = getZuijiTargets(targetYear, 8, employees, payrollRecords);
+        const z9 = getZuijiTargets(targetYear, 9, employees, payrollRecords);
+        // 予測された人たちのIDリストを合体！
+        zuijiExcludeIds = [...z7, ...z8, ...z9].map(t => String(t.id));
+    }
+    // ☝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝☝
+
+
   
     // 3️⃣ 従業員ごとに4・5・6月のデータを紐付けて法律計算を走らせる（完全自動・ノイズキャンセル版！）
     employees.forEach((emp) => {
-      const lastName = emp.lastNameKanji || "";
-      const firstName = emp.firstNameKanji || "";
-      const empName = (lastName || firstName) ? `${lastName} ${firstName}`.trim() : "名称未設定";
-      const empId = emp.employeeId || emp.employeeNumber || emp.id;
-      const empType = emp.contractInfo?.empType || "未設定";
-      const currentGrade = emp.healthGrade || 1;
+
+          const lastName = emp.lastNameKanji || "";
+          const firstName = emp.firstNameKanji || "";
+          const empName = (lastName || firstName) ? `${lastName} ${firstName}`.trim() : "名称未設定";
+          const empId = emp.employeeId || emp.employeeNumber || emp.id;
+          const empType = emp.contractInfo?.empType || "未設定";
+          const currentGrade = emp.healthGrade || 1;
+          // 🌟🌟🌟 【月変（随時改定）優先フィルター（完全版！）】 🌟🌟🌟
+          // パターンA：すでに青ボタンでDBに「予約チケット」が保存されているか？
+          const hasSavedTicket = Number(emp.scheduledApplyYear) === targetYear && [7, 8, 9].includes(Number(emp.scheduledApplyMonth));
+          
+          // パターンB：まだ保存してないけど、シミュレーションの結果「この人月変になる運命だ！」と予測されたか？
+          const isPredictedZuiji = zuijiExcludeIds.includes(empId);
+
+        // 🌟🌟🌟 【月変（随時改定）優先フィルター（UI変更版）】 🌟🌟🌟
+        const isExcludedByGeppen = hasSavedTicket || isPredictedZuiji;
+
+        // 👇 エラー回避！名前が被らないように「geppen専用」の変数にします
+        let geppenBadge = "";
+        let geppenRowStyle = ""; 
+
+        if (isExcludedByGeppen) {
+            console.log(`💡 ${emp.lastNameKanji}さんは月変優先ルールの対象のため、グレーアウトして表示します！`);
+            geppenBadge = `<span style="background-color: #f5f5f5; color: #888; border: 1px solid #d9d9d9; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">随時改定予定（対象外）</span>`;
+            geppenRowStyle = `style="background-color: #fafafa; color: #a0a0a0;"`;
+        }
+
       
-      const aprData = payrollRecords.find(r => String(r.employeeId) === String(empId) && Number(r.year) === 2026 && Number(r.month) === 4) || { totalWage: 0, days: 0, adjustmentAmount: 0, adjustmentReason: "" };
-      const mayData = payrollRecords.find(r => String(r.employeeId) === String(empId) && Number(r.year) === 2026 && Number(r.month) === 5) || { totalWage: 0, days: 0, adjustmentAmount: 0, adjustmentReason: "" };
-      const junData = payrollRecords.find(r => String(r.employeeId) === String(empId) && Number(r.year) === 2026 && Number(r.month) === 6) || { totalWage: 0, days: 0, adjustmentAmount: 0, adjustmentReason: "" };
+      const aprData = payrollRecords.find(r => String(r.employeeId) === String(empId) && Number(r.year) === targetYear && Number(r.month) === 4) || { totalWage: 0, days: 0, adjustmentAmount: 0, adjustmentReason: "" };
+      const mayData = payrollRecords.find(r => String(r.employeeId) === String(empId) && Number(r.year) === targetYear && Number(r.month) === 5) || { totalWage: 0, days: 0, adjustmentAmount: 0, adjustmentReason: "" };
+      const junData = payrollRecords.find(r => String(r.employeeId) === String(empId) && Number(r.year) === targetYear && Number(r.month) === 6) || { totalWage: 0, days: 0, adjustmentAmount: 0, adjustmentReason: "" };
 
 // 👇＝＝＝ ここから追加（年4回特例の判定） ＝＝＝👇
-const santeiYear = 2026; // ※処理する年
+const santeiYear = targetYear; // ※処理する年
 const periodStart = `${santeiYear - 1}-07-01`; 
 const periodEnd = `${santeiYear}-06-30`;
 
@@ -6508,7 +7111,7 @@ if (empBonuses.length >= 4) {
 }
 // ☝＝＝＝＝＝＝＝＝＝＝＝＝＝＝☝
 
- // =========================================================
+// =========================================================
       // 🌟🌟🌟 ハイブリッド判定 ＆ ノイズキャンセル融合エンジン 🌟🌟🌟
       // =========================================================
       
@@ -6537,16 +7140,16 @@ if (empBonuses.length >= 4) {
       let validWages: number[] = [];
 
       // 🌟 竹高さんオリジナルのノイズキャンセル関数（ハイブリッド対応版！）
-      const formatMonthCell = (data: any, monthNum: number,bonusAdd: number = 0) => {
+      const formatMonthCell = (data: any, monthNum: number, bonusAdd: number = 0) => {
           if (!data || (Number(data.totalWage) === 0 && Number(data.days) === 0)) {
-              return `<span style="color:#999;">データなし（入社前月）</span>`;
+              return `<span style="color:#999;">データなし月</span>`;
           }
 
           let wage = Number(data.totalWage);
           const adjAmount = Number(data.adjustmentAmount || 0);
           const reason = data.adjustmentReason;
 
-          // 🚨 【NEW】途中入社の月なら即除外！
+          // 🚨 途中入社の月なら即除外！
           if (isMidMonthJoin(monthNum)) {
               return `
                   <span style="color:#dc3545; text-decoration: line-through;">${wage.toLocaleString()}円<br>(${data.days}日)</span><br>
@@ -6565,7 +7168,7 @@ if (empBonuses.length >= 4) {
 
           let displayAdjustText = "";
           
-          // 💡 遡及・遅配のフラグがあれば「自動引き算」をして本来の給与額に戻す！（ノイズキャンセル）
+          // 💡 遡及・遅配のフラグがあれば「自動引き算」をして本来の給与額に戻す！
           if (reason === "sokyu" || reason === "chihai_past") {
               wage = wage - adjAmount; 
               if (adjAmount !== 0) {
@@ -6575,18 +7178,15 @@ if (empBonuses.length >= 4) {
               }
           }
 
-        // 👇＝＝＝ ここに追加！ ＝＝＝👇
           // 💡 年4回賞与特例の加算 ＆ 画面UIへの表示！
           if (bonusAdd > 0) {
-            wage = wage + bonusAdd; // 給与に上乗せ！
-            displayAdjustText += `<br><span style="font-size:11px; color:#e65100; font-weight:bold;">⚠️ 年4回賞与特例 (+${bonusAdd.toLocaleString()}円)</span>`;
-        }
-        // ☝＝＝＝＝＝＝＝＝＝＝＝＝＝＝☝
-
+              wage = wage + bonusAdd; // 給与に上乗せ！
+              displayAdjustText += `<br><span style="font-size:11px; color:#e65100; font-weight:bold;">⚠️ 年4回賞与特例 (+${bonusAdd.toLocaleString()}円)</span>`;
+          }
 
           // 💡 ハイブリッド判定で算出した `employeeThreshold` で日数チェック！
           if (Number(data.days) >= employeeThreshold) {
-              validWages.push(wage); // 🌟 ノイズキャンセル済みの綺麗な給与を計算用配列へ！
+              validWages.push(wage); // 🌟 計算用配列へ！
               return `<span>${wage.toLocaleString()}円<br>(${data.days}日)</span>${displayAdjustText}`;
           } else {
               return `
@@ -6596,59 +7196,118 @@ if (empBonuses.length >= 4) {
           }
       };
 
+      // 🌟 呼び出し時に monthlyBonusAddition を渡す！
+      const aprHtml = formatMonthCell(aprData, 4, monthlyBonusAddition);
+      const mayHtml = formatMonthCell(mayData, 5, monthlyBonusAddition);
+      const junHtml = formatMonthCell(junData, 6, monthlyBonusAddition);
 
-// 🌟 呼び出し時に monthlyBonusAddition を渡す！
-const aprHtml = formatMonthCell(aprData, 4, monthlyBonusAddition);
-const mayHtml = formatMonthCell(mayData, 5, monthlyBonusAddition);
-const junHtml = formatMonthCell(junData, 6, monthlyBonusAddition);
+      // 有効な月だけで平均額を算出
+      const averageWage = validWages.length > 0 ? Math.round(validWages.reduce((sum, w) => sum + w, 0) / validWages.length) : 0;
 
-// 有効な月だけで平均額を算出
-const averageWage = validWages.length > 0 ? Math.round(validWages.reduce((sum, w) => sum + w, 0) / validWages.length) : 0;
+      let resultHtml = "";
+      let statusBadge = "";
+      let exportData: any = null;
 
-// 🌟 NEW: データが空っぽの時の「分岐」を追加！
-let resultHtml = "";
-let statusBadge = "";
-let exportData: any = null;
+      // 🛑 判定0：2重定義を回避するため、上にある joinDateStr をそのまま再利用！
+      const isJuneOrLaterJoin = joinDateStr && new Date(joinDateStr) >= new Date(`${targetYear}-06-01`);
 
-if (validWages.length === 0) {
-  // 🚨 データが足りない場合は「現状維持（対象外）」として扱う
-  resultHtml = `
-      <span style="font-size:11px; color:#666;">現: ${currentGrade}等級</span><br>
-      <strong style="color:#6c757d; font-size:14px;">新: - (現等級を維持)</strong>
-  `;
-  // バッジもエラーっぽさを消し、明確に「算定対象外」と表示
-  statusBadge = `<span style="padding:4px 8px; background:#e2e3e5; color:#383d41; border: 1px solid #d6d8db; border-radius:4px; font-size:11px; font-weight:bold;">算定対象外</span>`;
-} else {
-    // 🟢 正常に計算できた場合（1ヶ月以上データがある）
-    const newInsurance = calculateSocialInsurance(averageWage);
-    resultHtml = `
-        <span style="font-size:11px; color:#666;">現: ${currentGrade}等級</span><br>
-        <strong style="color:#d32f2f; font-size:14px;">新: ${newInsurance.healthGrade}等級</strong>
-    `;
-    statusBadge = `<span style="padding:4px 8px; background:#28a745; color:white; border-radius:4px; font-size:11px; font-weight:bold;">自動計算済 ✓</span>`;
+      // 🛑 判定1：給与データが未登録（データなし）の月があるか？
+      const isMissingPayroll = 
+        (!aprData || (Number(aprData.totalWage) === 0 && Number(aprData.days) === 0)) ||
+        (!mayData || (Number(mayData.totalWage) === 0 && Number(mayData.days) === 0)) ||
+        (!junData || (Number(junData.totalWage) === 0 && Number(junData.days) === 0));
 
-    // 保存リスト（exportData）を作るのは、計算ができた人だけ！
-    exportData = {
-        empDocId: emp.id,
-        empId: empId,
-        empName: empName,
-        monthlyBonusAddition: monthlyBonusAddition,
-        newHealthGrade: newInsurance.healthGrade,
-        newPensionGrade: newInsurance.pensionGrade,
-        aprData: aprData,
-        mayData: mayData,
-        junData: junData,
-        averageWage: averageWage,
-        totalSum: validWages.reduce((sum, w) => sum + w, 0),
-        empType: empType,
-        adjustmentState: {
-            4: { reason: aprData.adjustmentReason },
-            5: { reason: mayData.adjustmentReason },
-            6: { reason: junData.adjustmentReason }
-        }
-    };
-}
+     // 🟢 修正後
+      const isAlreadySaved = Number(emp.santeiApplyYear) === targetYear && Number(emp.santeiCalculatedMonths) === 3;
 
+      // 👇 ここから5段構えの分岐スタート！
+      if (isJuneOrLaterJoin) {
+        // 🛡️ 0. 当年の6月1日以降に入社した人は、問答無用で算定対象外！（グレー）
+        resultHtml = `
+            <span style="font-size:11px; color:#666;">現: ${currentGrade}等級</span><br>
+            <strong style="color:#6c757d; font-size:14px;">新: - (当年6月以降入社のため対象外)</strong>
+        `;
+        statusBadge = `<span style="padding:4px 8px; background:#e2e3e5; color:#383d41; border: 1px solid #d6d8db; border-radius:4px; font-size:11px; font-weight:bold;">算定対象外</span>`;
+
+      } else if (isMissingPayroll) {
+        // 🚨 1. 給与未確定（黄）
+        resultHtml = `
+            <span style="font-size:11px; color:#666;">現: ${currentGrade}等級</span><br>
+            <strong style="color:#e65100; font-size:14px;">新: 計算不可 (給与未確定)</strong>
+        `;
+        statusBadge = `<span style="padding:4px 8px; background:#fff3cd; color:#856404; border: 1px solid #ffeeba; border-radius:4px; font-size:11px; font-weight:bold;">⚠️ 給与未確定</span>`;
+
+      } else if (isAlreadySaved) {
+        // 🛡️ 2. すでに保存済みの人（青）
+        resultHtml = `
+            <span style="font-size:11px; color:#666;">現: ${currentGrade}等級</span><br>
+            <strong style="color:#0056b3; font-size:14px;">新: ${emp.santeiNextHealthGrade || '-'}等級 (予約済)</strong>
+        `;
+        statusBadge = `<span style="padding:4px 8px; background:#17a2b8; color:white; border-radius:4px; font-size:11px; font-weight:bold;">🔒 保存済</span>`;
+
+        // 🌟🌟🌟 【追加】CSV出力のために、青バッジの人も箱（exportData）に入れる！
+        exportData = {
+          empDocId: emp.id,
+          empId: empId,
+          empName: empName,
+          calculatedMonths: Number(emp.santeiCalculatedMonths) || validWages.length,
+          monthlyBonusAddition: monthlyBonusAddition,
+          newHealthGrade: emp.santeiNextHealthGrade, // DBに保存されている等級をそのまま使う
+          newPensionGrade: emp.santeiNextPensionGrade,
+          aprData: aprData,
+          mayData: mayData,
+          junData: junData,
+          averageWage: averageWage,
+          totalSum: validWages.reduce((sum, w) => sum + w, 0),
+          empType: empType,
+          isAlreadySaved: true, // 👈 【超重要】青ボタンで二重保存しないための目印！
+          adjustmentState: {
+              4: { reason: aprData.adjustmentReason },
+              5: { reason: mayData.adjustmentReason },
+              6: { reason: junData.adjustmentReason }
+          }
+      };
+
+      } else if (validWages.length === 0) {
+        // 🚨 3. 算定対象外（グレー：日数不足など）
+        resultHtml = `
+            <span style="font-size:11px; color:#666;">現: ${currentGrade}等級</span><br>
+            <strong style="color:#6c757d; font-size:14px;">新: - (現等級を維持)</strong>
+        `;
+        statusBadge = `<span style="padding:4px 8px; background:#e2e3e5; color:#383d41; border: 1px solid #d6d8db; border-radius:4px; font-size:11px; font-weight:bold;">算定対象外</span>`;
+
+      } else {
+        // 🟢 4. 今回新たに計算できた人 ＝ これから保存する対象者（緑）
+        const newInsurance = calculateSocialInsurance(averageWage);
+        resultHtml = `
+            <span style="font-size:11px; color:#666;">現: ${currentGrade}等級</span><br>
+            <strong style="color:#d32f2f; font-size:14px;">新: ${newInsurance.healthGrade}等級</strong>
+        `;
+        statusBadge = `<span style="padding:4px 8px; background:#28a745; color:white; border-radius:4px; font-size:11px; font-weight:bold;">自動計算済 ✓</span>`;
+        
+        // ★今回保存する対象データを作成
+        exportData = {
+            empDocId: emp.id,
+            empId: empId,
+            empName: empName,
+            calculatedMonths: validWages.length,
+            monthlyBonusAddition: monthlyBonusAddition,
+            newHealthGrade: newInsurance.healthGrade,
+            newPensionGrade: newInsurance.pensionGrade,
+            aprData: aprData,
+            mayData: mayData,
+            junData: junData,
+            averageWage: averageWage,
+            totalSum: validWages.reduce((sum, w) => sum + w, 0),
+            empType: empType,
+            isAlreadySaved: false, // 👈 【追加】この人は新規なので保存対象！という目印
+            adjustmentState: {
+                4: { reason: aprData.adjustmentReason },
+                5: { reason: mayData.adjustmentReason },
+                6: { reason: junData.adjustmentReason }
+            }
+        };
+      }
 // 🎨 テーブル行を生成
 // ==========================================
 // 🌟 UI改善：社保区分のバッジ作成ロジック（算定基礎用）
@@ -6677,6 +7336,13 @@ const badgeStyle = "display: inline-block; padding: 2px 6px; font-size: 10px; fo
 
 // 💡 ここから tr の作成！
 const tr = document.createElement('tr');
+
+// 👇 【追加】もし月変対象なら、行そのものをグレーに塗る！
+if (geppenBadge) {
+  tr.style.backgroundColor = "#fafafa";
+  tr.style.color = "#a0a0a0";
+}
+
 tr.innerHTML = `
     <td style="vertical-align: top; padding: 12px; border-bottom: 1px solid #dee2e6;">
         <strong style="font-size: 14px; color: #333; display: block; margin-bottom: 4px;">${empName}</strong>
@@ -6707,8 +7373,14 @@ tr.innerHTML = `
     </td>
     
     <td style="text-align: center; padding: 12px; vertical-align: middle; border-bottom: 1px solid #dee2e6;">
-        ${statusBadge}
-    </td>
+            <div style="display: flex; flex-direction: column; gap: 4px; align-items: center;">
+                
+                ${geppenBadge}
+                
+                ${statusBadge || `<span style="background-color: #e6f7ff; color: #0056b3; border: 1px solid #91d5ff; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">算定対象</span>`}
+                
+            </div>
+        </td>
 `;
 tbody.appendChild(tr);
 
@@ -6784,33 +7456,68 @@ const searchTerm = (e.target as HTMLInputElement).value.normalize('NFKC').toLowe
     originMonthSelect.style.backgroundColor = '#ffffff';
   }
 };
+
       // ==========================================
       // 💾 【ステップ①への繋ぎ込み】新等級の自動予約システム
       // ==========================================
       const saveBtn = document.getElementById('btn-save-santei') as HTMLButtonElement;
+      const newSaveBtn = saveBtn.cloneNode(true) as HTMLButtonElement;
+　　　　　　　saveBtn.parentNode?.replaceChild(newSaveBtn, saveBtn);
       
       // 古いイベントリスナーが重複しないように一度ボタンをクローンして初期化
-      const newSaveBtn = saveBtn.cloneNode(true) as HTMLButtonElement;
-      saveBtn.parentNode?.replaceChild(newSaveBtn, saveBtn);
-  
       newSaveBtn.addEventListener('click', async () => {
-        if (!confirm("全員の新等級（9月適用分）をデータベースに予約保存しますか？\n8月までの過去画面は維持され、9月分になった瞬間に自動切り替えされます。")) return;
-  
+        // 🌟🌟🌟 【ここに追加！】誰も保存対象がいない場合はポップアップを出さずに即弾く！
+        // 🟢 修正後
+        const targetsToSave = finalSanteiBatchList.filter(res => res.isAlreadySaved === false);
+        if (targetsToSave.length === 0) {
+            alert("【エラー】新しく保存可能な対象者がいません。（全員が保存済、または対象外です）");
+            return; 
+        }
+
+        // 🌟🌟🌟 追加ここまで
+            
+        // ▼▼▼ 1. confirm（確認ポップアップ）の【直前】にこれを追加 ▼▼▼
+
+        // 🏢 会社マスタをカンニングして、当月控除か翌月控除かを確認する
+        const cid = localStorage.getItem('current_company_id');
+        let deductionTiming = 'next_month'; // デフォルトは安全な「翌月控除」にしておく
+
+        if (cid) {
+            const companySnap = await getDoc(doc(db, 'companies', cid));
+            if (companySnap.exists() && companySnap.data().deductionTiming) {
+                deductionTiming = companySnap.data().deductionTiming;
+            }
+        }
+
+        // 🎯 実際に「天引き額」が変わる月を計算
+        const deductionStartMonth = (deductionTiming === 'current_month') ? 9 : 10;
+        const timingText = (deductionTiming === 'current_month') ? '当月控除' : '翌月控除';
+
+        // 確認ポップアップの文言も、マスタに合わせて親切に進化させます！
+        if (!confirm(`全員の新等級をデータベースに予約保存しますか？\n\n※この会社は【${timingText}】設定のため、新しい保険料は「${deductionStartMonth}月支給の給与」から自動で適用されます。`)) return;
+
+        // ▲▲▲ ここまで ▲▲▲
+            
         newSaveBtn.disabled = true;
         newSaveBtn.innerText = "⏳ 等級予約を書き込み中...";
   
         try {
           // 全員の予約データをFirebaseのusersコレクションに「予約フィールド」として書き込む
-          for (const res of finalSanteiBatchList) {
+          // 🟢 修正後
+            for (const res of targetsToSave) {
+
             await setDoc(doc(db, "users", res.empDocId), {
               // ❌ healthGrade を直接上書きするのをやめて、未来の予約チケットにする！
               santeiNextHealthGrade: res.newHealthGrade,
               santeiNextPensionGrade: res.newPensionGrade,
-              santeiApplyYear: 2026, // 適用する年
+              santeiApplyYear: targetYear, // 適用する年
               santeiApplyMonth: 9,   // 適用する月
+              // 🟢 【ここを追加！】給与計算システムに向けた「天引き開始月」のチケット
+              santeiDeductionMonth: deductionStartMonth,
               santeiReservedAt: new Date(),
               santeiStatus: "9月適用予約済",
-              santeiAdjustment2026: res.adjustmentState
+              santeiAdjustment: res.adjustmentState,
+              santeiCalculatedMonths: res.calculatedMonths
             }, { merge: true });
           }
 
@@ -7076,6 +7783,11 @@ const searchTerm = (e.target as HTMLInputElement).value.normalize('NFKC').toLowe
     }
       }; // 🌟🌟🌟 ③ ここで箱（loadSanteiData）を閉じる！ 🌟🌟🌟
 
+      // 💡 2. プルダウンが切り替わった瞬間に発動するスイッチを追加！
+    yearSelect.addEventListener('change', () => {
+      console.log(`🔄 ${yearSelect.value}年度に切り替えました！再計算します...`);
+      loadSanteiData(); // 👈 これを呼ぶだけで、画面が最新の年に再描画される！
+    });
 
         // 🌟🌟🌟 ④ 画面を開いた時に1回だけ箱を開ける（実行する） 🌟🌟🌟
         loadSanteiData();
@@ -8109,11 +8821,17 @@ function downloadCSV(content: string, fileName: string) {
             const cutoffSelect = document.getElementById('company-cutoff-day') as HTMLSelectElement;
             const payMonthSelect = document.getElementById('company-payment-month') as HTMLSelectElement;
             const payDaySelect = document.getElementById('company-payment-day') as HTMLSelectElement;
+            // 🟢 【追加】控除タイミングの要素を取得
+            const deductionTimingSelect = document.getElementById('insurance-deduction-timing') as HTMLSelectElement;
 
             // DBにデータがあれば、プルダウンの選択肢を自動で切り替える
             if (cutoffSelect && data.cutoffDay) cutoffSelect.value = data.cutoffDay;
             if (payMonthSelect && data.paymentMonth) payMonthSelect.value = data.paymentMonth;
             if (payDaySelect && data.paymentDay) payDaySelect.value = data.paymentDay;
+            // 🟢 【追加】DBにデータがあればセット、無ければデフォルトで 'next_month' にする
+            if (deductionTimingSelect) {
+              deductionTimingSelect.value = data.deductionTiming || 'next_month';
+            }
         }
     } catch (error) {
         console.error("設定の読み込みエラー:", error);
@@ -8135,6 +8853,8 @@ document.addEventListener('click', async (e) => {
         const cutoffVal = (document.getElementById('company-cutoff-day') as HTMLSelectElement)?.value;
         const payMonthVal = (document.getElementById('company-payment-month') as HTMLSelectElement)?.value;
         const payDayVal = (document.getElementById('company-payment-day') as HTMLSelectElement)?.value;
+        // 🟢 【追加】控除タイミングの値を取得
+        const deductionTimingVal = (document.getElementById('insurance-deduction-timing') as HTMLSelectElement)?.value;
 
         try {
             // 正しい会社（companies内のcid）に保存する！！
@@ -8142,11 +8862,14 @@ document.addEventListener('click', async (e) => {
                 cutoffDay: cutoffVal,
                 paymentMonth: payMonthVal,
                 paymentDay: payDayVal,
+                // 🟢 【追加】控除タイミングをDBに書き込む
+                deductionTiming: deductionTimingVal,
                 updatedAt: serverTimestamp()
             });
 
-            alert(`✅ 給与計算ルールを保存しました！\n締め日: ${cutoffVal}\n支払月: ${payMonthVal}\n\n（給与タブの労働期間表示にも反映されます）`);
-        } catch (error) {
+          // 🟢 アラート文言もついでに分かりやすく変更
+          alert(`✅ 給与計算ルールを保存しました！\n締め日: ${cutoffVal}\n支払月: ${payMonthVal}\n社保控除: ${deductionTimingVal === 'current_month' ? '当月控除' : '翌月控除'}\n\n（給与タブの労働期間表示などにも反映されます）`);
+          } catch (error) {
             console.error("会社設定の保存に失敗:", error);
             alert("保存エラーが発生しました。");
         }
@@ -8245,12 +8968,16 @@ async function initZuijiUI() {
 
 // 🌟 NEW: まずプルダウンが存在するか＆空っぽかチェックして、自動生成！
 const targetSelect = document.getElementById('zuiji-target-month') as HTMLSelectElement;
+const revisionMonth = Number(targetSelect?.value || new Date().getMonth() + 1);
+const optionText = targetSelect?.options[targetSelect.selectedIndex]?.text || "";
+const revisionYear = parseInt(optionText.match(/\d{4}/)?.[0] || String(new Date().getFullYear()));
+
 if (targetSelect && targetSelect.options.length === 0) {
     const now = new Date();
     const currentY = now.getFullYear();
     const currentM = now.getMonth() + 1;
 
-    for (let i = -1; i <= 5; i++) {
+    for (let i = -1; i <= 12; i++) {
         let y = currentY;
         let m = currentM + i;
         if (m > 12) { m -= 12; y += 1; }
@@ -8272,6 +8999,7 @@ if (targetSelect && targetSelect.options.length === 0) {
 
 
 }
+
 
   const listBody = document.getElementById('zuiji-list-body');
   if (!listBody) return;
@@ -8298,38 +9026,125 @@ if (targetSelect && targetSelect.options.length === 0) {
       const payrollRecords: any[] = [];
       payrollSnapshot.forEach((doc) => payrollRecords.push(doc.data()));
 
+// =========================================================
+      // 🚨🚨 【神機能】プルダウンの全月をチェックして「🔴 未処理マーク」をつける！
+      // =========================================================
+      if (targetSelect) {
+        Array.from(targetSelect.options).forEach(option => {
+            // 選択肢から年と月を割り出す
+            const optYearMatch = option.text.match(/\d{4}/);
+            const optYear = optYearMatch ? parseInt(optYearMatch[0]) : new Date().getFullYear();
+            const optMonth = parseInt(option.value);
+
+            // 💡 共通関数を使って、その月の対象者を裏側で計算する！
+            const rawTargets = getZuijiTargets(optYear, optMonth, employees, payrollRecords);
+
+            // 💡 抽出された人の中から、「すでに適用済み（足跡あり）」の人を除外する
+            const unprocessedCount = rawTargets.filter((t: any) => {
+                const emp = employees.find((e: any) => e.id === t.realFirebaseId || String(e.employeeId) === String(t.id));
+                if (emp && emp.appliedGeppenYear === optYear && emp.appliedGeppenMonth === optMonth) {
+                    return false; // 適用済みはノーカウント
+                }
+                return true; // 未処理！
+            }).length;
+
+            // 🎨 プルダウンのテキストを書き換える
+            const cleanText = `${optYear}年 ${optMonth}月 改定予定`; // 元の綺麗なテキスト
+            if (unprocessedCount > 0) {
+                option.text = `🔴 ${cleanText} (未処理 ${unprocessedCount}名)`;
+                option.style.color = "red"; // ※一部のブラウザのみ有効
+                option.style.fontWeight = "bold";
+            } else {
+                option.text = cleanText;
+                option.style.color = "";
+                option.style.fontWeight = "normal";
+            }
+        });
+    }
+    // =========================================================
+
       // 🔥 ここで共通関数を呼び出すだけ！
       const targets = getZuijiTargets(revisionYear, revisionMonth, employees, payrollRecords);
 
+      // 👇 ✨NEW✨ マスタから「すでに適用済みの人」を抽出して targets に合流させる！
+      employees.forEach((emp: any) => {
+        if (emp.appliedGeppenYear === revisionYear && emp.appliedGeppenMonth === revisionMonth) {
+            // 既にtargets内にいるかチェック（重複防止）
+            const alreadyExists = targets.some((t: any) => t.id === (emp.employeeId || emp.id) || t.realFirebaseId === emp.id);
+            if (!alreadyExists) {
+                // 過去の月を計算（表示用）
+                let startM = revisionMonth - 3; let startY = revisionYear;
+                if (startM <= 0) { startM += 12; startY -= 1; }
+                let endM = revisionMonth - 1; if (endM <= 0) { endM += 12; }
+
+                targets.push({
+                    isApplied: true, // 🌟 適用済みフラグ
+                    id: emp.employeeId || emp.id,
+                    realFirebaseId: emp.id,
+                    name: `${emp.lastNameKanji || ''} ${emp.firstNameKanji || ''}`.trim(),
+                    currentGrade: emp.appliedGeppenOldGrade,
+                    newGrade: emp.appliedGeppenNewGrade,
+                    gradeDiff: emp.appliedGeppenNewGrade - emp.appliedGeppenOldGrade,
+                    avgWage: emp.appliedGeppenAvgWage,
+                    triggerText: emp.appliedGeppenTrigger || "固定的賃金変動",
+                    m1: { year: startY, month: startM },
+                    m3: { month: endM }
+                });
+            }
+        }
+      });
+
+      // 🌟 ID順に再ソート（追加した人を正しい位置に並べる）
+      targets.sort((a: any, b: any) => {
+        const idA = String(a.id || "");
+        const idB = String(b.id || "");
+        return idA.localeCompare(idB, undefined, { numeric: true });
+      });
+
+      // 👇 ✨変更✨ 保存対象（グローバル）には「未適用の人」だけを入れる！
+      (window as any).geppenTargets = targets.filter((t: any) => !t.isApplied);
+
+      // // 👇 ✨NEW✨ 計算したデータを「適用ボタン」からも使えるようにグローバルに保存！
+      // (window as any).geppenTargets = targets;
+
       if (targets.length > 0) {
           let tableHTML = '';
-          targets.forEach(t => {
-              const gradeColor = t.newGrade > t.currentGrade ? "#d32f2f" : "#0056b3";
-              const arrow = t.newGrade > t.currentGrade ? "↗" : "↘";
-              tableHTML += `
-              <tr style="border-bottom: 1px solid #eee;">
-                  <td style="padding: 12px; vertical-align: top;">
-                      <strong>${t.name}</strong><br><span style="font-size: 11px; color: #666;">ID: ${t.id}</span>
-                  </td>
-                  <td style="padding: 12px; vertical-align: top; color: #d32f2f; font-weight: bold; font-size: 12px;">
-                      ${t.m1.year}年${t.m1.month}月に<br>${t.triggerText}あり
-                  </td>
-                  <td style="padding: 12px; vertical-align: top;">
-                      <span style="color: #0056b3; font-weight: bold;">${t.avgWage.toLocaleString()} 円</span><br>
-                      <span style="font-size: 10px; color: #666;">(${t.m1.month}月〜${t.m3.month}月の実績)</span>
-                  </td>
-                  <td style="padding: 12px; vertical-align: top; background: #fff3cd;">
-                      <span style="font-size: 11px; color: #666;">現: ${t.currentGrade}等級</span><br>
-                      <strong style="color: ${gradeColor}; font-size: 14px;">新: ${t.newGrade}等級 ${arrow}</strong><br>
-                      <span style="font-size: 10px; color: #888;">(差: ${t.gradeDiff}等級)</span>
-                  </td>
-                  <td style="padding: 12px; text-align: center; vertical-align: middle;">
-                      <span style="padding: 4px 8px; background: #dc3545; color: white; border-radius: 4px; font-size: 11px; font-weight: bold;">月変対象</span>
-                  </td>
-              </tr>`;
-          });
-          listBody.innerHTML = tableHTML;
-      } else {
+          targets.forEach((t: any) => {
+            const gradeColor = t.newGrade > t.currentGrade ? "#d32f2f" : "#0056b3";
+            const arrow = t.newGrade > t.currentGrade ? "↗" : "↘";
+            
+            // 👇 ✨NEW✨ 適用済みかどうかの判定とUI切り替え
+            const isApplied = t.isApplied || false;
+            const rowBg = isApplied ? "#f8fafc" : "#ffffff"; // 適用済は少しグレーに
+            const rowOpacity = isApplied ? "0.6" : "1.0";    // 適用済は少し薄くする
+            const badgeHtml = isApplied 
+                ? `<span style="padding: 4px 8px; background: #e2e8f0; color: #475569; border-radius: 4px; font-size: 11px; font-weight: bold;">✅ 適用済</span>`
+                : `<span style="padding: 4px 8px; background: #dc3545; color: white; border-radius: 4px; font-size: 11px; font-weight: bold;">月変対象</span>`;
+
+            tableHTML += `
+            <tr style="border-bottom: 1px solid #eee; background-color: ${rowBg}; opacity: ${rowOpacity};">
+                <td style="padding: 12px; vertical-align: top;">
+                    <strong>${t.name}</strong><br><span style="font-size: 11px; color: #666;">ID: ${t.id}</span>
+                </td>
+                <td style="padding: 12px; vertical-align: top; color: #d32f2f; font-weight: bold; font-size: 12px;">
+                    ${t.m1.year}年${t.m1.month}月に<br>${t.triggerText}あり
+                </td>
+                <td style="padding: 12px; vertical-align: top;">
+                    <span style="color: #0056b3; font-weight: bold;">${t.avgWage.toLocaleString()} 円</span><br>
+                    <span style="font-size: 10px; color: #666;">(${t.m1.month}月〜${t.m3.month}月の実績)</span>
+                </td>
+                <td style="padding: 12px; vertical-align: top; background: ${isApplied ? 'transparent' : '#fff3cd'};">
+                    <span style="font-size: 11px; color: #666;">現: ${t.currentGrade}等級</span><br>
+                    <strong style="color: ${gradeColor}; font-size: 14px;">新: ${t.newGrade}等級 ${arrow}</strong><br>
+                    <span style="font-size: 10px; color: #888;">(差: ${t.gradeDiff}等級)</span>
+                </td>
+                <td style="padding: 12px; text-align: center; vertical-align: middle;">
+                    ${badgeHtml}
+                </td>
+            </tr>`;
+        });
+        listBody.innerHTML = tableHTML;
+    } else {
           listBody.innerHTML = `<tr><td colspan="5" style="text-align: center; padding: 30px; color: #666;">
               <strong>${revisionYear}年${revisionMonth}月改定予定</strong>の対象者は見つかりませんでした。<br>
               <span style="font-size:12px; color: #999;">※判定には対象となる3ヶ月分の給与実績が保存されている必要があります。</span>
@@ -8339,6 +9154,110 @@ if (targetSelect && targetSelect.options.length === 0) {
       console.error("随時改定UIエラー:", e);
       listBody.innerHTML = `<tr><td colspan="5" style="text-align: center; padding: 20px; color: red;">データの取得に失敗しました。</td></tr>`;
   }
+
+
+// =========================================================
+// 🚀 新機能：月変（随時改定）の新等級をマスタに一括適用
+// =========================================================
+const btnApplyRevisions = document.getElementById('btn-apply-revisions') as HTMLButtonElement;
+if (btnApplyRevisions) {
+  btnApplyRevisions.onclick = async () => {
+    
+
+    // 💡 Step 1で window に置いたデータを取得！
+    const targetsToApply = (window as any).geppenTargets || []; 
+
+    if (targetsToApply.length === 0) {
+      alert("適用する対象者がいません。");
+      return;
+    }
+
+// ▼▼▼ 🟢 魔法その1：マスタカンニングと「年またぎ」の計算 ▼▼▼
+const cid = localStorage.getItem('current_company_id');
+let deductionTiming = 'next_month'; // デフォルト
+
+if (cid) {
+    const companySnap = await getDoc(doc(db, 'companies', cid));
+    if (companySnap.exists() && companySnap.data().deductionTiming) {
+        deductionTiming = companySnap.data().deductionTiming;
+    }
+}
+
+// 🎯 実際に「天引き額」が変わる年と月を計算
+let deductionStartYear = revisionYear;
+let deductionStartMonth = revisionMonth;
+
+if (deductionTiming === 'next_month') {
+    if (revisionMonth === 12) {
+        // 💡 12月の翌月は「翌年の1月」になる！
+        deductionStartMonth = 1;
+        deductionStartYear = revisionYear + 1;
+    } else {
+        deductionStartMonth = revisionMonth + 1;
+    }
+}
+
+const timingText = (deductionTiming === 'current_month') ? '当月控除' : '翌月控除';
+// ▲▲▲ ここまで ▲▲▲
+
+
+// ▼▼▼ 🟢 魔法その2：ポップアップの文言を親切に進化 ▼▼▼
+if (!confirm(`⚠️ リストアップされた ${targetsToApply.length} 名の等級をマスタに予約します。\n\n※この会社は【${timingText}】設定のため、新しい保険料は「${deductionStartYear}年${deductionStartMonth}月支給の給与」から自動で適用されます。\nよろしいですか？`)) {
+  return;
+}
+
+
+    const originalText = btnApplyRevisions.innerText;
+    btnApplyRevisions.innerText = "⏳ マスタ更新中...";
+    btnApplyRevisions.disabled = true;
+
+    try {
+      const batch = writeBatch(db); // 🔥 必殺のバッチ処理
+
+      targetsToApply.forEach((t: any) => {
+        // t.id は employees を取得した際の doc.id なのでそのまま使える！
+        const userRef = doc(db, 'users', t.realFirebaseId);
+        
+        batch.set(userRef, {
+          scheduledHealthGrade: t.newGrade,
+          scheduledBaseHealth: t.avgWage,     
+          scheduledPensionGrade: t.newGrade,
+          scheduledBasePension: t.avgWage,
+          scheduledApplyYear: revisionYear,   // 法律上の適用年
+          scheduledApplyMonth: revisionMonth, // 法律上の適用月
+          
+          // ▼▼▼ 🟢 魔法その3：給与計算用の「天引き開始」チケットを保存 ▼▼▼
+          scheduledDeductionYear: deductionStartYear,
+          scheduledDeductionMonth: deductionStartMonth,
+
+         appliedGeppenYear: revisionYear,
+          appliedGeppenMonth: revisionMonth,
+          appliedGeppenOldGrade: t.currentGrade,
+          appliedGeppenNewGrade: t.newGrade,
+          appliedGeppenAvgWage: t.avgWage,
+          appliedGeppenTrigger: t.triggerText,
+
+          updatedAt: new Date()
+        }, { merge: true });
+      });
+
+      await batch.commit();
+
+      alert(`🎉 適用完了！！\n${targetsToApply.length}名分の新しい等級と標準報酬月額を従業員マスタに反映しました！\n（次回の給与計算から新しい保険料が天引きされます）`);
+      
+      // 適用後、画面をスッキリさせるためにリロード
+      window.location.reload();
+
+    } catch (error) {
+      console.error("マスタ適用エラー:", error);
+      alert("マスタの更新中にエラーが発生しました。");
+    } finally {
+      btnApplyRevisions.innerText = originalText;
+      btnApplyRevisions.disabled = false;
+    }
+  };
+}
+
 }
 
 // プルダウンを切り替えたら即座に再計算するイベント
@@ -8347,3 +9266,242 @@ document.getElementById('zuiji-target-month')?.addEventListener('change', () => 
 });
 
 loadEmployeeList();
+// =========================================================
+// 🛡️ 月次保険料タブ：データ読み込み＆計算ロジック（真・完全無敵版）
+// =========================================================
+// =========================================================
+// 🛡️ 月次保険料タブ：データ読み込み＆計算ロジック（真・完全無敵版）
+// =========================================================
+async function loadInsuranceData() {
+  console.log("🟢 [保険料タブ] 読み込みスタート！");
+
+  // グローバル変数との衝突を避けるため専用の変数名に！
+  const insYear = Number(localStorage.getItem('saved_salary_year')) || 2026;
+  const insMonth = Number(localStorage.getItem('saved_salary_month')) || 6;
+
+  const lockCompanyId = localStorage.getItem('current_company_id');
+  const tbody = document.getElementById('insurance-list-body');
+  const alertBox = document.getElementById('insurance-unconfirmed-alert');
+  const displayMonth = document.getElementById('display-insurance-month');
+  const totalCompanyEl = document.getElementById('total-company-insurance');
+  const totalYtdEl = document.getElementById('total-company-insurance-ytd');
+
+  // 🕵️‍♂️ もしHTML側で書き忘れがあって取得できなかったらコンソールで警告を出す！
+  if (!lockCompanyId || !tbody || !displayMonth) {
+      console.error("🔴 [保険料タブ] エラー：必要な画面パーツが見つかりません！");
+      return;
+  }
+
+  displayMonth.innerText = `${insYear}年${insMonth}月分`;
+  tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; padding: 20px; color: #666;">⏳ データを読み込み中...</td></tr>`;
+
+  try {
+    const statusDocId = `${lockCompanyId}_${insYear}_${insMonth}`;
+    const statusSnap = await getDoc(doc(db, 'payroll_status', statusDocId));
+    const isConfirmed = statusSnap.exists() && statusSnap.data().isConfirmed;
+
+    // 🌟 ① 【マスター拡張】名前と一緒に「標準報酬月額」も辞書に登録！
+    const usersSnap = await getDocs(query(collection(db, "users"), where("companyId", "==", lockCompanyId)));
+    const userMaster: { [key: string]: { name: string, stdWage: number } } = {};
+    usersSnap.forEach(doc => {
+        const u = doc.data();
+        if (u.employeeId) {
+            userMaster[u.employeeId] = {
+                name: `${u.lastNameKanji || ''} ${u.firstNameKanji || ''}`.trim(),
+                stdWage: Number(u.baseHealth || 0)
+            };
+        }
+    });
+
+    let records: any[] = [];
+    let isSimulation = false;
+
+    if (isConfirmed) {
+      console.log(`🔒 ${insMonth}月は確定済み（実績モード）`);
+      if (alertBox) alertBox.style.display = "none";
+      
+      const q = query(collection(db, "monthly_payroll_records"),
+          where("companyId", "==", lockCompanyId),
+          where("year", "==", insYear),
+          where("month", "==", insMonth)
+      );
+      const snap = await getDocs(q);
+      
+      snap.forEach(doc => {
+          const data = doc.data();
+          records.push({
+              empName: userMaster[data.employeeId]?.name || '名称未設定',
+              empId: data.employeeId || '未設定',
+              stdWage: userMaster[data.employeeId]?.stdWage || 0,
+              healthInsurance: data.healthPremium || 0,
+              healthInsuranceComp: data.healthPremiumComp || data.healthPremium || 0, // 👈 会社分を読み込む！
+              pensionInsurance: data.pensionPremium || 0, 
+              pensionInsuranceComp: data.pensionPremiumComp || data.pensionPremium || 0, // 👈 会社分を読み込む！
+              careInsurance: data.nursingPremium || 0,
+              careInsuranceComp: data.nursingPremiumComp || data.nursingPremium || 0, // 👈 会社分を読み込む！
+              childSupport: data.childSupportEmp || 0, // 🏢 拠出金 (全額会社負担)
+              supportPremium: data.supportPremium || data.childCarePremium || 0,
+              supportPremiumComp: data.supportPremiumComp || data.supportPremium || data.childCarePremium || 0 // 👈 会社分を読み込む！
+          });
+      });
+
+    } else {
+      console.log(`🔮 ${insMonth}月は未確定（シミュレーションモード）`);
+      if (alertBox) alertBox.style.display = "block";
+      isSimulation = true;
+      
+      usersSnap.forEach(doc => {
+          const emp = doc.data();
+          if (!emp.employeeId) return;
+          records.push({
+              empName: `${emp.lastNameKanji || ''} ${emp.firstNameKanji || ''}`.trim() || '名称未設定',
+              empId: emp.employeeId || '未設定',
+              stdWage: Number(emp.baseHealth || 0),
+              healthInsurance: 0,  
+              healthInsuranceComp: 0,
+              pensionInsurance: 0, 
+              pensionInsuranceComp: 0,
+              careInsurance: 0,
+              careInsuranceComp: 0,
+              childSupport: 0,
+              supportPremium: 0,
+              supportPremiumComp: 0
+          });
+      });
+  }
+// ---------------------------------------------------------
+    // 👇🔥 新規追加：画面に描画する前に、従業員ID順（昇順）に並び替える！
+    // ---------------------------------------------------------
+    records.sort((a, b) => String(a.empId).localeCompare(String(b.empId)));
+  let html = "";
+  let totalCompanyBurden = 0;
+
+  if (records.length === 0) {
+      html = `<tr><td colspan="7" style="text-align: center; padding: 20px;">データがありません。</td></tr>`;
+  } else {
+      records.forEach(r => {
+          const health = Number(r.healthInsurance || 0);
+          const healthComp = Number(r.healthInsuranceComp || 0); // 🌟 会社分展開
+          const pension = Number(r.pensionInsurance || 0);
+          const pensionComp = Number(r.pensionInsuranceComp || 0); // 🌟 会社分展開
+          const care = Number(r.careInsurance || 0);
+          const careComp = Number(r.careInsuranceComp || 0); // 🌟 会社分展開
+          const support = Number(r.supportPremium || 0); 
+          const supportComp = Number(r.supportPremiumComp || 0); // 🌟 会社分展開
+          const child = Number(r.childSupport || 0);     
+          
+          const totalIndividual = health + pension + care + support; 
+          // 🏢 会社負担内訳（ついに完璧な計算式！）
+          const totalCompany = healthComp + pensionComp + careComp + supportComp + child;    
+          const totalBoth = totalIndividual + totalCompany; 
+
+          totalCompanyBurden += totalCompany; 
+
+          const rowStyle = isSimulation ? 'background-color: #fafafa; color: #777;' : '';
+          const stdWageDisplay = r.stdWage > 0 ? `${r.stdWage.toLocaleString()} 円` : '- 円';
+
+          // 👇 従業員額 / 会社額 で左右に分けて表示！
+          html += `
+              <tr style="${rowStyle}">
+                  <td style="padding: 12px; border-bottom: 1px solid #dee2e6;">
+                      ${r.empName} <br><span style="font-size: 10px; color: #999;">ID: ${r.empId}</span>
+                  </td>
+                  <td style="padding: 12px; border-bottom: 1px solid #dee2e6; text-align: right;">
+                      ${stdWageDisplay}
+                  </td>
+                  <td style="padding: 12px; border-bottom: 1px solid #dee2e6; text-align: center;">
+                      ${health.toLocaleString()} 円<br><span style="font-size: 11px; color:#666;">(${health.toLocaleString()} / ${healthComp.toLocaleString()})</span>
+                  </td>
+                  <td style="padding: 12px; border-bottom: 1px solid #dee2e6; text-align: center;">
+                      ${pension.toLocaleString()} 円<br><span style="font-size: 11px; color:#666;">(${pension.toLocaleString()} / ${pensionComp.toLocaleString()})</span>
+                  </td>
+                  <td style="padding: 12px; border-bottom: 1px solid #dee2e6; text-align: center;">
+                      ${care.toLocaleString()} 円<br><span style="font-size: 11px; color:#666;">(${care.toLocaleString()} / ${careComp.toLocaleString()})</span>
+                  </td>
+                  <td style="padding: 12px; border-bottom: 1px solid #dee2e6; text-align: center; background-color: #fffaf0;">
+                      ${support.toLocaleString()} 円<br><span style="font-size: 11px; color:#666;">(${support.toLocaleString()} / ${supportComp.toLocaleString()})</span>
+                  </td>
+                  <td style="padding: 12px; border-bottom: 1px solid #dee2e6; text-align: right; font-weight: bold; color: #0056b3;">
+                      ${totalBoth.toLocaleString()} 円<br>
+                      <span style="font-size: 11px; color: #d63384;">+拠出金(会社): ${child.toLocaleString()}円</span>
+                  </td>
+              </tr>
+          `;
+      });
+  }
+
+    tbody.innerHTML = html;
+    if (totalCompanyEl) totalCompanyEl.innerText = totalCompanyBurden.toLocaleString();
+    
+    // 🌟 ③ 【年間累計の計算】今年の1月〜今月までのデータを全部取って合算！
+    if (totalYtdEl) {
+        const ytdQuery = query(collection(db, "monthly_payroll_records"),
+            where("companyId", "==", lockCompanyId),
+            where("year", "==", insYear)
+        );
+        const ytdSnap = await getDocs(ytdQuery);
+        
+        let ytdTotalCompany = 0;
+        ytdSnap.forEach(doc => {
+            const d = doc.data();
+            // 今月以下の月だけを合算対象にする
+            if (Number(d.month) <= insMonth) {
+                // 👇 ここもバグ修正！従業員額ではなく会社額（Comp）を合算する！
+                const hComp = Number(d.healthPremiumComp || d.healthPremium || 0);
+                const pComp = Number(d.pensionPremiumComp || d.pensionPremium || 0);
+                const cComp = Number(d.nursingPremiumComp || d.nursingPremium || 0);
+                const sComp = Number(d.supportPremiumComp || d.supportPremium || d.childCarePremium || 0);
+                const ch = Number(d.childSupportEmp || 0); 
+                ytdTotalCompany += (hComp + pComp + cComp + sComp + ch); 
+            }
+        });
+        totalYtdEl.innerText = ytdTotalCompany.toLocaleString();
+    }
+
+    console.log("🟢 [保険料タブ] 描画完了！");
+
+} catch (error) {
+    console.error("🔴 [保険料タブ] 読み込みエラー:", error);
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: red;">エラーが発生しました。</td></tr>`;
+}
+}
+
+
+
+
+// =========================================================
+// 🛡️ イベントリスナー（絶対動く「待ち伏せ」方式）
+// =========================================================
+document.addEventListener('click', (e) => {
+  const target = e.target as HTMLElement;
+
+  // ① タブ切り替えボタンのクリック検知
+  if (target.classList.contains('sub-tab-btn') || target.closest('.sub-tab-btn')) {
+      const btn = target.classList.contains('sub-tab-btn') ? target : target.closest('.sub-tab-btn');
+      if (btn && btn.getAttribute('data-sub-target') === 'payroll-insurance') {
+          loadInsuranceData();
+      }
+  }
+
+  // ② 「前月」ボタンのクリック検知
+  if (target.id === 'btn-prev-month-insurance') {
+      let insYear = Number(localStorage.getItem('saved_salary_year')) || 2026;
+      let insMonth = Number(localStorage.getItem('saved_salary_month')) || 6;
+      insMonth--;
+      if (insMonth < 1) { insMonth = 12; insYear--; }
+      localStorage.setItem('saved_salary_month', insMonth.toString());
+      localStorage.setItem('saved_salary_year', insYear.toString());
+      loadInsuranceData(); 
+  }
+
+  // ③ 「次月」ボタンのクリック検知
+  if (target.id === 'btn-next-month-insurance') {
+      let insYear = Number(localStorage.getItem('saved_salary_year')) || 2026;
+      let insMonth = Number(localStorage.getItem('saved_salary_month')) || 6;
+      insMonth++;
+      if (insMonth > 12) { insMonth = 1; insYear++; }
+      localStorage.setItem('saved_salary_month', insMonth.toString());
+      localStorage.setItem('saved_salary_year', insYear.toString());
+      loadInsuranceData(); 
+  }
+});

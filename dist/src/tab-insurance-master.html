@@ -130,6 +130,19 @@
               </select>
           </div>
       </div>
+      <div style="margin-top: 20px; width: 60%;"> <!-- 上との余白を作り、横幅が広がりすぎないように60%にしています -->
+        <label style="font-size: 12px; font-weight: bold;">社会保険料の控除タイミング</label>
+        <select id="insurance-deduction-timing" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc; background-color: #fff;">
+            <option value="next_month" selected>翌月控除（一般的：9月改定なら10月支給給与から変更）</option>
+            <option value="current_month">当月控除（9月改定なら9月支給給与から変更）</option>
+        </select>
+        <div style="font-size: 11px; color: #666; margin-top: 4px;">
+            ※算定基礎や随時改定の際、新しい等級を何月支給の給与から適用するかをシステムが自動判定します。
+        </div>
+    </div>
+
+</div>
+
       <button id="btn-save-company-pay-rules" style="margin-top: 15px; padding: 10px 20px; background-color: #28a745; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;">
           💾 給与ルールを保存する
       </button>
@@ -191,12 +204,23 @@
               <div style="margin-bottom: 20px; background: #fff; border: 1px solid #ced4da; padding: 15px; border-radius: 6px;">
                   <label style="display: block; font-weight: bold; margin-bottom: 8px; color: #495057;">✍️ 適用する健康保険料率（全体）%</label>
                   <div style="display: flex; align-items: center; gap: 10px;">
-                      <input type="number" id="input-custom-rate" step="0.01" style="width: 100px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px;" placeholder="例: 9.98">
+                      <input type="number" id="input-custom-rate" step="0.01" style="width: 100px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px;" value="9.98">
                       <span style="font-size: 16px; font-weight: bold;">%</span>
                       <button id="btn-reset-rate" style="padding: 6px 12px; font-size: 12px; cursor: pointer; background: #e9ecef; border: 1px solid #ccc; border-radius: 4px;">元の料率に戻す</button>
                   </div>
-                  <p style="margin: 5px 0 0 0; font-size: 12px; color: #888;">※会社と本人で半分ずつ（折半）負担します。</p>
+                  <p style="margin: 5px 0 0 0; font-size: 12px; color: #888;">※会社と本人で半分ずつ（折半）負担します。</p>  
               </div>
+              <div style="margin-bottom: 20px; background: #fff; border: 1px solid #ced4da; padding: 15px; border-radius: 6px;">
+                <label style="display: block; font-weight: bold; margin-bottom: 8px; color: #495057;">👴 適用する介護保険料率（全体）%</label>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <!-- 初期値として value="1.62" を設定！ IDも専用のものを付けます -->
+                    <input type="number" id="input-nursing-rate" step="0.01" value="1.62" style="width: 100px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px;">
+                    <span style="font-size: 16px; font-weight: bold;">%</span>
+                    <button id="btn-reset-nursing-rate" style="padding: 6px 12px; font-size: 12px; cursor: pointer; background: #e9ecef; border: 1px solid #ccc; border-radius: 4px;">元の料率に戻す</button>
+                </div>
+                <p style="margin: 5px 0 0 0; font-size: 12px; color: #888;">※40歳～64歳の対象者のみ、会社と本人で半分ずつ（折半）負担します。</p>
+            </div>
+            <!-- ☝️☝️☝️ ここまで追加 ☝️☝️☝️ -->
           </div>
 
           <div id="kumiai-section" style="display: none; background: #fff; border: 2px solid #0d6efd; padding: 20px; border-radius: 6px; margin-bottom: 20px;">

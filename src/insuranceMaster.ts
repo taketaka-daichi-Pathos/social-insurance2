@@ -21,21 +21,28 @@ export interface InsuranceSettings {
 }
 
 
-
+// 🛡️ 労務SaaS専用エンジン：社会保険料の端数処理（50銭以下切り捨て）
+export function calcPremium(base: number, rate: number): number {
+  const exactAmount = base * rate;
+  const fraction = Math.round((exactAmount % 1) * 1000) / 1000;
+  if (fraction <= 0.50) {
+      return Math.floor(exactAmount);
+  } else {
+      return Math.ceil(exactAmount);
+  }
+}
   
 // 💡 1. 全国の健康保険料率辞書（令和6年度 協会けんぽベース・抜粋）
 // 💡 全国の健康保険料率辞書（令和6年度 協会けんぽ）
+// 💡 全国の健康保険料率辞書（令和8年度 協会けんぽベース）
 export const PREFECTURE_HEALTH_RATES: { [key: string]: number } = {
-  '北海道': 0.1021, '青森県': 0.0977, '岩手県': 0.0980, '宮城県': 0.0983, '秋田県': 0.0983,
-  '山形県': 0.0987, '福島県': 0.0977, '茨城県': 0.0987, '栃木県': 0.0984, '群馬県': 0.0981,
-  '埼玉県': 0.0978, '千葉県': 0.0980, '東京都': 0.0998, '神奈川県': 0.0999, '新潟県': 0.0982,
-  '富山県': 0.0969, '石川県': 0.0989, '福井県': 0.0989, '山梨県': 0.0974, '長野県': 0.0971,
-  '岐阜県': 0.0984, '静岡県': 0.0979, '愛知県': 0.0999, '三重県': 0.0976, '滋賀県': 0.0977,
-  '京都府': 0.1002, '大阪府': 0.1034, '兵庫県': 0.1020, '奈良県': 0.0994, '和歌山県': 0.0987,
-  '鳥取県': 0.0988, '島根県': 0.0990, '岡山県': 0.1003, '広島県': 0.0993, '山口県': 0.1005,
-  '徳島県': 0.1015, '香川県': 0.1020, '愛媛県': 0.0997, '高知県': 0.1009, '福岡県': 0.1035,
-  '佐賀県': 0.1042, '長崎県': 0.1032, '熊本県': 0.1036, '大分県': 0.1012, '宮崎県': 0.0986,
-  '鹿児島県': 0.1009, '沖縄県': 0.0996
+  '北海道': 0.1028, '青森県': 0.0985, '岩手県': 0.0951, '宮城県': 0.1010, '秋田県': 0.1001, '山形県': 0.0975, '福島県': 0.0950,
+  '茨城県': 0.0952, '栃木県': 0.0982, '群馬県': 0.0968, '埼玉県': 0.0967, '千葉県': 0.0973, '東京都': 0.0985, '神奈川県': 0.0992,
+  '新潟県': 0.0921, '富山県': 0.0959, '石川県': 0.0970, '福井県': 0.0971, '山梨県': 0.0955, '長野県': 0.0963, '岐阜県': 0.0980,
+  '静岡県': 0.0961, '愛知県': 0.0993, '三重県': 0.0977, '滋賀県': 0.0988, '京都府': 0.0989, '大阪府': 0.1013, '兵庫県': 0.1012,
+  '奈良県': 0.0991, '和歌山県': 0.1006, '鳥取県': 0.0986, '島根県': 0.0994, '岡山県': 0.1005, '広島県': 0.0978, '山口県': 0.1015,
+  '徳島県': 0.1024, '香川県': 0.1002, '愛媛県': 0.0998, '高知県': 0.1005, '福岡県': 0.1011, '佐賀県': 0.1055, '長崎県': 0.1006,
+  '熊本県': 0.1008, '大分県': 0.1008, '宮崎県': 0.0977, '鹿児島県': 0.1013, '沖縄県': 0.0944
 };
 
 
@@ -44,23 +51,23 @@ export const PREFECTURE_HEALTH_RATES: { [key: string]: number } = {
 export const DEFAULT_RATES: InsuranceSettings = {
   insuranceType: 'kyokai',
   prefecture: '東京都',
-  healthRate: 0.0998,
-  healthRateEmp: 0.0998 / 2,   // 協会なので半分！
-  healthRateComp: 0.0998 / 2,
-  nursingRate: 0.0160,
-  nursingRateEmp: 0.0160 / 2,
-  nursingRateComp: 0.0160 / 2,
+  healthRate: 0.0985,
+  healthRateEmp: 0.0985 / 2,   // 協会なので半分！
+  healthRateComp: 0.0985 / 2,
+  nursingRate: 0.0162,
+  nursingRateEmp: 0.0162 / 2,
+  nursingRateComp: 0.0162 / 2,
   pensionRate: 0.1830,
   childContributionRate: 0.0036,
-  childSupportRateEmp: 0,
-  childSupportRateComp: 0
+  childSupportRateEmp: 0.0023,
+  childSupportRateComp: 0.0023
 };
 
 // 💡 3. 設定された都道府県から、計算用の「料率セット」を生成する関数
 // 💡 3. getInsuranceSettings もハイブリッド版に
 export function getInsuranceSettings(prefectureName: string): InsuranceSettings {
   // 辞書から探して、見つからなければ安全のために東京の料率を使う
-  const hRate = PREFECTURE_HEALTH_RATES[prefectureName] || 0.0998; 
+  const hRate = PREFECTURE_HEALTH_RATES[prefectureName] || 0.0985; 
   
   return {
     insuranceType: 'kyokai',
@@ -68,9 +75,9 @@ export function getInsuranceSettings(prefectureName: string): InsuranceSettings 
     healthRate: hRate,
     healthRateEmp: hRate / 2,     // 協会けんぽなのでピッタリ半分！
     healthRateComp: hRate / 2,
-    nursingRate: 0.0160,
-    nursingRateEmp: 0.0160 / 2,
-    nursingRateComp: 0.0160 / 2,
+    nursingRate: 0.0162,
+    nursingRateEmp: 0.0162 / 2,
+    nursingRateComp: 0.0162 / 2,
     pensionRate: 0.1830
   };
 }
@@ -139,6 +146,7 @@ export function getInsuranceSettings(prefectureName: string): InsuranceSettings 
    */
 // 🌟 進化した計算エンジン（第4の引数「forceHealthGrade」を追加！）
 // 🌟 進化した計算エンジン（子育て支援金 完全対応版！）
+// 🌟 進化した計算エンジン（子育て支援金＆1円ズレ完全対応・安全装置付き版！）
 export function calculateSocialInsurance(
   totalWage: number, 
   age: number = 30, 
@@ -169,26 +177,40 @@ export function calculateSocialInsurance(
     standardPension = 650000;
   }
 
-  // 健康保険
-  const healthPremium = Math.round(standardHealth * rates.healthRateEmp);
-  const healthPremiumComp = Math.round(standardHealth * rates.healthRateComp);
+  // 🛡️【NEW: 最強の安全装置】もし rates の中身が欠けていても、絶対にエラーを起こさせない！
+  const safeHealthEmp = rates.healthRateEmp || (rates.healthRate ? rates.healthRate / 2 : 0);
+  const safeHealthComp = rates.healthRateComp || (rates.healthRate ? rates.healthRate / 2 : 0);
+  const healthTotalRate = rates.healthRate || (Math.round((safeHealthEmp + safeHealthComp) * 100000) / 100000);
 
-  // 厚生年金
-  const pensionPremium = Math.round(standardPension * (rates.pensionRate / 2));
-  const pensionPremiumComp = pensionPremium; 
+  const safeNursingEmp = rates.nursingRateEmp || (rates.nursingRate ? rates.nursingRate / 2 : 0);
+  const safeNursingComp = rates.nursingRateComp || (rates.nursingRate ? rates.nursingRate / 2 : 0);
+  const nursingTotalRate = rates.nursingRate || (Math.round((safeNursingEmp + safeNursingComp) * 100000) / 100000);
 
-  // 介護保険
+  const pensionTotalRate = rates.pensionRate || (Math.round(((rates.pensionRateEmp || 0) + (rates.pensionRateComp || 0)) * 100000) / 100000);
+
+  // 💡 1. 健康保険（総額から本人分を引く絶対法則）
+  const healthPremium = calcPremium(standardHealth, safeHealthEmp);
+  const totalHealthStatutory = Math.floor(Math.round(standardHealth * healthTotalRate * 1000) / 1000);
+  const healthPremiumComp = totalHealthStatutory - healthPremium;
+
+  // 💡 2. 厚生年金
+  const pensionPremium = calcPremium(standardPension, (pensionTotalRate / 2));
+  const totalPensionStatutory = Math.floor(Math.round(standardPension * pensionTotalRate * 1000) / 1000);
+  const pensionPremiumComp = totalPensionStatutory - pensionPremium;
+
+  // 💡 3. 介護保険
   const isNursingTarget = age >= 40 && age < 65;
-  const nursingPremium = isNursingTarget ? Math.round(standardHealth * rates.nursingRateEmp) : 0;
-  const nursingPremiumComp = isNursingTarget ? Math.round(standardHealth * rates.nursingRateComp) : 0;
+  const nursingPremium = isNursingTarget ? calcPremium(standardHealth, safeNursingEmp) : 0;
+  const totalNursingStatutory = isNursingTarget ? Math.floor(Math.round(standardHealth * nursingTotalRate * 1000) / 1000) : 0;
+  const nursingPremiumComp = isNursingTarget ? (totalNursingStatutory - nursingPremium) : 0;
 
-  // 🌟 NEW: 子ども・子育て支援金の計算（マスタ設定 rates を使用！）
-  // ※ 万が一 rates に入っていない時のために、フォールバック（|| 0）を入れています
+  // 💡 4. 子ども・子育て支援金
   const childSupportRateEmp = rates.childSupportRateEmp || 0;
   const childSupportRateComp = rates.childSupportRateComp || 0;
-
-  const childSupportPremium = Math.round(standardHealth * childSupportRateEmp);
-  const childSupportPremiumComp = Math.round(standardHealth * childSupportRateComp);
+  const childSupportPremium = calcPremium(standardHealth, childSupportRateEmp);
+  const childTotalRate = Math.round((childSupportRateEmp + childSupportRateComp) * 100000) / 100000;
+  const totalChildSupportStatutory = Math.floor(Math.round(standardHealth * childTotalRate * 1000) / 1000);
+  const childSupportPremiumComp = totalChildSupportStatutory - childSupportPremium;
 
   return {
     healthGrade,
@@ -199,13 +221,13 @@ export function calculateSocialInsurance(
     pensionPremium,
     nursingPremium,
     childSupportPremium, // 👈 追加！本人負担の子育て支援金
-    totalDeduction: healthPremium + pensionPremium + nursingPremium + childSupportPremium, // 👈 合計にも足す！
+    totalDeduction: healthPremium + pensionPremium + nursingPremium + childSupportPremium,
 
     healthPremiumComp,   
     pensionPremiumComp,
     nursingPremiumComp,
     childSupportPremiumComp, // 👈 追加！会社負担の子育て支援金
-    totalCompBurden: healthPremiumComp + pensionPremiumComp + nursingPremiumComp + childSupportPremiumComp // 👈 合計にも足す！
+    totalCompBurden: healthPremiumComp + pensionPremiumComp + nursingPremiumComp + childSupportPremiumComp
   };
 }
 

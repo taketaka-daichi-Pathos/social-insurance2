@@ -6,6 +6,7 @@
       <button class="sub-tab-btn" data-sub-target="payroll-zuiji" style="padding: 8px 16px; border: none; background: #f8f9fa; color: #555; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; font-weight: bold;">🔄 随時改定 (月額変更)</button>
       <button class="sub-tab-btn" data-sub-target="payroll-santei" style="padding: 8px 16px; border: none; background: #f8f9fa; color: #555; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; font-weight: bold;">🏢 算定基礎 (年次処理)</button>
       <button class="sub-tab-btn" data-sub-target="payroll-bonus" style="padding: 8px 16px; border: none; background: #f8f9fa; color: #555; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; font-weight: bold;">🎁 賞与支払届</button>
+      <button class="sub-tab-btn" data-sub-target="payroll-insurance" style="padding: 8px 16px; border: none; background: #f8f9fa; color: #555; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; font-weight: bold;">🛡️ 月次保険料一覧</button>
     </div>
 
 
@@ -116,9 +117,17 @@
               給与実績データから「固定的賃金に変動があり、かつ3ヶ月平均で2等級以上の差が生じた従業員」を自動抽出しています。
             </p>
           </div>
-          <select id="zuiji-target-month" style="padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-weight: bold;">
-          </select>
-          <button id="btn-export-egov-geppen" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">📥 e-Gov用 CSV出力(月変届)</button>
+
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <select id="zuiji-target-month" style="padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-weight: bold;">
+            </select>
+            <button id="btn-apply-revisions" style="padding: 8px 16px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 14px;">
+              💾 全員の新等級をDBに保存(マスタ適用)
+            </button>
+            <button id="btn-export-egov-geppen" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 14px;">
+              📥 e-Gov用 CSV出力(月変届)
+            </button>
+          </div>
         </div>
       
         <table style="width: 100%; border-collapse: collapse; font-size: 13px; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
@@ -140,9 +149,13 @@
   
       <div id="payroll-santei" class="sub-tab-content" style="display: none;">
         <h3 style="color: #333; margin-bottom: 15px;">🏢 算定基礎届 (4〜6月平均) の一括処理</h3>
-        
+        <div style="margin-bottom: 10px;">
+          <label for="santei-target-year" style="font-size: 14px; font-weight: bold; color: #333;">対象年度：</label>
+          <select id="santei-target-year" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #ccc; font-weight: bold; color: #0056b3;">
+            </select>
+        </div>
         <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 15px;">
-          
+
           <p style="color: #666; font-size: 13px; margin: 0;">
             4月・5月・6月の給与実績（固定的賃金＋非固定的賃金）をもとに、新しい標準報酬月額を自動計算します。<br>
             ※基礎日数が17日（パートは11日）未満の月は、法律に基づき平均計算から自動除外されます。
@@ -199,7 +212,7 @@
         </div>
     
         <div style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px;">
-          <button id="btn-save-santei" style="padding: 10px 24px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">💾 全員の新等級をDBに保存(9月適用)</button>
+          <button id="btn-save-santei" style="padding: 10px 24px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">💾 全員の新等級をDBに保存(9月改定)</button>
           <button id="btn-export-santei-csv" style="padding: 10px 24px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">📥 e-Gov用 CSV出力(算定基礎届)</button>
         </div>
       </div>
@@ -283,6 +296,63 @@
           <button id="btn-save-bonus-batch" style="padding: 10px 24px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">💾 全員の賞与実績をDBに保存して確定する</button>
         </div>
       </div>
+
+      <div id="payroll-insurance" class="sub-tab-content" style="display: none; padding: 20px; background: white; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-top: 15px;">
+    
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 style="margin: 0; font-size: 18px; color: #333; display: flex; align-items: center; gap: 8px;">
+                🛡️ 月次保険料一覧 (会社・個人負担内訳)
+            </h3>
+            
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <button id="btn-prev-month-insurance" style="padding: 5px 10px; cursor: pointer;">◀ 前月</button>
+                <span id="display-insurance-month" style="font-weight: bold; font-size: 16px;">2026年6月分</span>
+                <button id="btn-next-month-insurance" style="padding: 5px 10px; cursor: pointer;">次月 ▶</button>
+            </div>
+        </div>
+        <div id="insurance-unconfirmed-alert" style="display: none; background-color: #fff3cd; color: #856404; padding: 12px 15px; border-left: 5px solid #ffeeba; border-radius: 4px; margin-bottom: 15px; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+          ⚠️ この月の給与実績は未確定です。現在の従業員マスターに基づく「保険料の見込み額（シミュレーション）」を表示しています。
+      </div>
+        <div style="max-height: 50vh; overflow-y: auto; position: relative; border: 1px solid #dee2e6; border-radius: 4px; margin-bottom: 15px;">
+          <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; margin: 0;">
+            <thead style="position: sticky; top: 0; z-index: 2;">
+              <tr style="background-color: #f8f9fa; box-shadow: 0 1px 2px rgba(0,0,0,0.1); text-align: center; vertical-align: middle;">
+                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">氏名 / ID</th>
+                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">標準報酬月額</th>
+                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">健康保険料<br><span style="font-size: 11px; color:#666;">(被保険者 / 事業主)</span></th>
+                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">厚生年金保険料<br><span style="font-size: 11px; color:#666;">(被保険者 / 事業主)</span></th>
+                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">介護保険料<br><span style="font-size: 11px; color:#666;">(対象者のみ)</span></th>
+                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6; background-color: #fff9e6;">子育て支援金<br><span style="font-size: 11px; color:#666;">(被保険者 / 事業主)</span></th>
+                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">合計保険料<br><span style="font-size: 11px; color:#666;">(折半総額)</span></th>
+              </tr>
+          </thead>
+              <tbody id="insurance-list-body">
+                  </tbody>
+          </table>
+      </div>
+  
+      <div style="position: sticky; bottom: 0; padding: 15px 25px; background-color: #e6f7ff; border: 1px solid #91d5ff; border-radius: 6px; display: flex; justify-content: flex-end; align-items: center; gap: 30px; box-shadow: 0 -4px 15px rgba(0, 100, 200, 0.15); z-index: 10;">
+          
+          <div style="text-align: right;">
+              <div style="font-size: 12px; color: #0056b3; font-weight: bold; margin-bottom: 2px;">当月分 法定福利費（会社負担）</div>
+              <strong style="font-size: 24px; color: #0056b3;"><span id="total-company-insurance">0</span> <span style="font-size: 14px;">円</span></strong>
+          </div>
+  
+          <div style="width: 2px; height: 40px; background-color: #91d5ff;"></div>
+  
+          <div style="text-align: right;">
+              <div style="font-size: 12px; color: #d63384; font-weight: bold; margin-bottom: 2px;">本年度 累計コスト（当月まで）</div>
+              <strong style="font-size: 24px; color: #d63384;"><span id="total-company-insurance-ytd">0</span> <span style="font-size: 14px;">円</span></strong>
+          </div>
+          
+      </div>
+
+    </div>
+
+
+
+
+
   
       <div id="salary-slip" class="sub-tab-content" style="display: none;">
 

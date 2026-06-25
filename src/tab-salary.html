@@ -20,23 +20,27 @@
     <button id="btn-prev-month" style="padding: 5px 10px; cursor: pointer;">◀ 前月</button>
     <span id="display-current-month" style="font-weight: bold; font-size: 16px;">読み込み中...</span>
     <button id="btn-next-month" style="padding: 5px 10px; cursor: pointer;">次月 ▶</button>
+    <div style="display: none;">
     <span id="display-target-period" style="font-size: 12px; color: #555; background: #f8f9fa; padding: 4px 10px; border-radius: 20px; border: 1px solid #ddd; margin-left: 5px; font-weight: bold; box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);">
       計算期間を読み込み中...
     </span>
+    </div>
+    
   </div> 
   <div style="display: flex; gap: 10px;">
     <div>
-      <input type="file" id="csv-upload" accept=".csv" style="display: none;">
-      <button id="btn-csv-import" style="padding: 8px 14px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1); font-size: 13px;">
-        📁 毎月給与インポート
+      <input type="file" id="master-csv-upload" accept=".csv" style="display: none;">
+      <button id="btn-master-csv-import" style="padding: 8px 14px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1); font-size: 13px;">
+        ⚙️固定的賃金インポート
       </button>
     </div>
     <div>
-      <input type="file" id="master-csv-upload" accept=".csv" style="display: none;">
-      <button id="btn-master-csv-import" style="padding: 8px 14px; background: #6f42c1; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1); font-size: 13px;">
-        ⚙️昇給インポート
+      <input type="file" id="csv-upload" accept=".csv" style="display: none;">
+      <button id="btn-csv-import" style="padding: 8px 14px; background: #6f42c1; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1); font-size: 13px;">
+        📁基礎日数・非固定賃金インポート
       </button>
     </div>
+
   </div>
 
   <div style="width: 1px; height: 24px; background: #ccc;"></div>
@@ -105,7 +109,7 @@
       </div>
         
       <div style="margin-top: 20px; text-align: right;">
-        <button id="btn-save-monthly" style="padding: 10px 24px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">💾 この月の実績を確定する</button>
+        <button id="btn-save-monthly" style="padding: 10px 24px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">💾 当月を締めくくる（月変チェック）</button>
       </div>
     </div>
 
@@ -313,39 +317,31 @@
         <div id="insurance-unconfirmed-alert" style="display: none; background-color: #fff3cd; color: #856404; padding: 12px 15px; border-left: 5px solid #ffeeba; border-radius: 4px; margin-bottom: 15px; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
           ⚠️ この月の給与実績は未確定です。現在の従業員マスターに基づく「保険料の見込み額（シミュレーション）」を表示しています。
       </div>
-        <div style="max-height: 50vh; overflow-y: auto; position: relative; border: 1px solid #dee2e6; border-radius: 4px; margin-bottom: 15px;">
-          <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; margin: 0;">
-            <thead style="position: sticky; top: 0; z-index: 2;">
-              <tr style="background-color: #f8f9fa; box-shadow: 0 1px 2px rgba(0,0,0,0.1); text-align: center; vertical-align: middle;">
-                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">氏名 / ID</th>
-                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">標準報酬月額</th>
-                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">健康保険料<br><span style="font-size: 11px; color:#666;">(被保険者 / 事業主)</span></th>
-                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">厚生年金保険料<br><span style="font-size: 11px; color:#666;">(被保険者 / 事業主)</span></th>
-                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">介護保険料<br><span style="font-size: 11px; color:#666;">(対象者のみ)</span></th>
-                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6; background-color: #fff9e6;">子育て支援金<br><span style="font-size: 11px; color:#666;">(被保険者 / 事業主)</span></th>
-                  <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">合計保険料<br><span style="font-size: 11px; color:#666;">(折半総額)</span></th>
-              </tr>
-          </thead>
-              <tbody id="insurance-list-body">
-                  </tbody>
-          </table>
-      </div>
-  
-      <div style="position: sticky; bottom: 0; padding: 15px 25px; background-color: #e6f7ff; border: 1px solid #91d5ff; border-radius: 6px; display: flex; justify-content: flex-end; align-items: center; gap: 30px; box-shadow: 0 -4px 15px rgba(0, 100, 200, 0.15); z-index: 10;">
-          
-          <div style="text-align: right;">
-              <div style="font-size: 12px; color: #0056b3; font-weight: bold; margin-bottom: 2px;">当月分 法定福利費（会社負担）</div>
-              <strong style="font-size: 24px; color: #0056b3;"><span id="total-company-insurance">0</span> <span style="font-size: 14px;">円</span></strong>
-          </div>
-  
-          <div style="width: 2px; height: 40px; background-color: #91d5ff;"></div>
-  
-          <div style="text-align: right;">
-              <div style="font-size: 12px; color: #d63384; font-weight: bold; margin-bottom: 2px;">本年度 累計コスト（当月まで）</div>
-              <strong style="font-size: 24px; color: #d63384;"><span id="total-company-insurance-ytd">0</span> <span style="font-size: 14px;">円</span></strong>
-          </div>
-          
-      </div>
+
+      <div style="max-height: 50vh; overflow-y: auto; position: relative; border: 1px solid #dee2e6; border-radius: 4px; margin-bottom: 15px;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; margin: 0;">
+          <thead style="position: sticky; top: 0; z-index: 2;">
+            <tr style="background-color: #f8f9fa; box-shadow: 0 1px 2px rgba(0,0,0,0.1); text-align: center; vertical-align: middle;">
+                <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">氏名 / ID</th>
+                <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">健康保険料<br><span style="font-size: 11px; color:#666;">(合算額 / 内訳)</span></th>
+                <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">厚生年金保険料<br><span style="font-size: 11px; color:#666;">(合算額 / 内訳)</span></th>
+                <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6;">介護保険料<br><span style="font-size: 11px; color:#666;">(合算額 / 内訳)</span></th>
+                <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6; background-color: #f0f8ff;">本人負担保険料</th>
+                <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6; background-color: #fff0f5;">会社負担保険料</th>
+                <th style="padding: 12px; font-weight: bold; border-bottom: 1px solid #dee2e6; background-color: #f8f9fa;">合計保険料</th>
+            </tr>
+        </thead>
+            <tbody id="insurance-list-body">
+                </tbody>
+        </table>
+    </div>
+
+    <div style="position: sticky; bottom: 0; padding: 15px 25px; background-color: #e6f7ff; border: 1px solid #91d5ff; border-radius: 6px; display: flex; justify-content: flex-end; align-items: center; box-shadow: 0 -4px 15px rgba(0, 100, 200, 0.15); z-index: 10;">
+        <div style="text-align: right;">
+            <div style="font-size: 12px; color: #d63384; font-weight: bold; margin-bottom: 2px;">本年度 累計コスト（当月まで）</div>
+            <strong style="font-size: 24px; color: #d63384;"><span id="total-company-insurance-ytd">0</span> <span style="font-size: 14px;">円</span></strong>
+        </div>
+    </div>
 
     </div>
 

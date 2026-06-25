@@ -162,14 +162,42 @@ const loadEmployees = () => {
             }
             // =========================================================
 
-
-// =========================================================
-            // 🌟 追加①：社会保険料「免除」バッジの生成
             // =========================================================
-            const exemptBadgeHtml = emp.isSocialInsuranceExempt 
+            // 🌟 追加①：社会保険料「免除」バッジの生成（期間判定・完全対応版！）
+            // =========================================================
+            // =========================================================
+            // 🔍 デバッグログ付き：社会保険料「免除」バッジの生成
+            // =========================================================
+
+            const today = new Date();
+            const todayStr = today.getFullYear() + '-' + 
+                            String(today.getMonth() + 1).padStart(2, '0') + '-' + 
+                            String(today.getDate()).padStart(2, '0');
+
+            let isActuallyExempt = emp.isSocialInsuranceExempt;
+
+            // 🚨 ここでコンソールに emp の中身を丸裸にして出力します！
+            console.log(`🔍 [Debug] ${emp.lastNameKanji || '社員' }様の判定データ:`, {
+                isSocialInsuranceExempt: emp.isSocialInsuranceExempt,
+                leaveStartDate: emp.leaveStartDate, // 👈 ここが undefined になっていないかチェック！
+                leaveEndDate: emp.leaveEndDate,     // 👈 ここが undefined になっていないかチェック！
+                todayStr: todayStr
+            });
+
+            if (isActuallyExempt) {
+                if (emp.leaveStartDate && todayStr < emp.leaveStartDate) {
+                    console.log("➡️ まだ開始前なので免除対象外にします");
+                    isActuallyExempt = false;
+                }
+                if (emp.leaveEndDate && todayStr > emp.leaveEndDate) {
+                    console.log("➡️ 既に終了期間を過ぎたので免除対象外にします");
+                    isActuallyExempt = false;
+                }
+            }
+
+            const exemptBadgeHtml = isActuallyExempt 
               ? `<span style="background: #dc3545; color: white; font-size: 12px; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle;">🆓 社会保険料免除中</span>` 
               : '';
-
             // =========================================================
             // 🌟 追加②：扶養家族のループ描画ロジック（複数人対応！）
             // =========================================================

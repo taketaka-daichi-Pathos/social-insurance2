@@ -407,13 +407,46 @@ infoForm?.addEventListener('submit', async (e) => {
             dependent: dependentData,
             updatedAt: new Date()
         };
-        await setDoc(doc(db, 'users', currentUserId), employeeData, { merge: true });
-        // 🌟 ここを修正！ステータスを戻すと同時に、差し戻しフラグをへし折る！
-        await updateDoc(doc(db, 'invites', currentUserEmail), {
+        console.log("=== 🚀 保存処理スタート ===");
+        // 🌟 1. URLから「手動モード」判定
+        const urlParams = new URLSearchParams(window.location.search);
+        const isManualMode = urlParams.get('mode') === 'manual';
+        console.log("手動モード判定:", isManualMode);
+        let targetDocId = currentUserId;
+        let targetEmail = currentUserEmail || "";
+        if (isManualMode) {
+            const inputEmail = prompt("【手動追加】\n新規追加する従業員のメールアドレスを入力してください:");
+            console.log("入力されたメアド:", inputEmail);
+            if (!inputEmail) {
+                alert("入力がキャンセルされました。保存を中止します。");
+                return;
+            }
+            targetDocId = inputEmail;
+            targetEmail = inputEmail;
+        }
+        if (!targetDocId) {
+            console.error("💥 エラー: 保存先のIDが空っぽです！");
+            throw new Error("保存先のドキュメントIDが見つかりません。");
+        }
+        const myCompanyId = localStorage.getItem('current_company_id') || "";
+        console.log("セットする会社ID:", myCompanyId);
+        // 🌟 3. usersコレクションに保存
+        console.log("usersコレクションに保存中...");
+        await setDoc(doc(db, 'users', targetDocId), {
+            ...employeeData,
+            email: targetEmail,
+            companyId: myCompanyId
+        }, { merge: true });
+        // 🌟 4. invitesコレクションに保存
+        console.log("invitesコレクションに保存中...");
+        await setDoc(doc(db, 'invites', targetDocId), {
+            email: targetEmail,
             status: '確認待ち',
-            isRemanded: false, // ✨ これがバナーを消去する魔法の1行
-            remandReason: "" // ✨ 次のために理由も空っぽにリセットしておく
-        });
+            isRemanded: false,
+            remandReason: "",
+            companyId: myCompanyId
+        }, { merge: true });
+        console.log("=== ✨ 保存完了！ ===");
         // 🌟 --- ここから追加：扶養追加があればライフイベントに申請を自動生成 ---
         if (radioDepYes?.checked && dependentData) {
             try {
@@ -447,13 +480,17 @@ infoForm?.addEventListener('submit', async (e) => {
         if (msgDiv) {
             msgDiv.style.backgroundColor = '#d4edda';
             msgDiv.style.color = '#155724';
-            msgDiv.innerText = '✓ 提出が完了しました！書類画像も安全に送信されました。';
+            // 🌟 修正1：手動モードか通常ルートかで完了メッセージを切り替える！
+            msgDiv.innerText = isManualMode
+                ? '✓ 手動追加が完了しました！このタブを閉じて管理画面を更新してください。'
+                : '✓ 提出が完了しました！書類画像も安全に送信されました。';
         }
         infoForm.style.display = 'none';
-        // ① ダッシュボードへ移動ボタンを出現させる（display: none を block にする）
+        // ① ダッシュボードへ移動ボタンを出現させるかの制御
         const toDashboardBtn = document.getElementById('btn-to-dashboard');
         if (toDashboardBtn) {
-            toDashboardBtn.style.display = 'block';
+            // 🌟 修正2：手動モードの時は従業員ページに行かせないため「none」、通常時は「block」
+            toDashboardBtn.style.display = isManualMode ? 'none' : 'block';
         }
         // ② もう一度「提出」を押されないように、元の提出ボタンを隠す（親切設計！）
         const submitBtn = document.querySelector('.btn-submit');

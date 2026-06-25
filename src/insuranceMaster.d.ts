@@ -30,7 +30,8 @@ export declare const HEALTH_BRACKETS: {
  * @param age 年齢（介護保険の判定用。初期値30歳）
  * @param rates 適用する料率マスタ
  */
-export declare function calculateSocialInsurance(totalWage: number, age?: number, rates?: any, forceHealthGrade?: number): {
+export declare function calculateSocialInsurance(totalWage: number, age?: number, rates?: any, forceHealthGrade?: number, isExempt?: boolean, // 💡 元の位置（5番目）に戻す！
+forcePensionGrade?: number): {
     healthGrade: number;
     standardHealth: number;
     pensionGrade: number;

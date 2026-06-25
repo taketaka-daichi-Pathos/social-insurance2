@@ -1,6 +1,6 @@
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, type User } from 'firebase/auth';
 // 🌟 collection を追加インポート（新しい会社IDを自動生成するため）
-import { doc, getDoc, setDoc, collection } from 'firebase/firestore'; 
+import { doc, getDoc, setDoc, collection,deleteDoc } from 'firebase/firestore'; 
 import { auth, db } from './config/firebase.js';  
 
 const loginForm = document.getElementById('login-form') as HTMLFormElement;
@@ -67,27 +67,35 @@ async function handleUserRouting(user: User) {
     } else {
       // ============================================================
       // 🌟🌟🌟 新規アカウントを作った直後（運命の分かれ道） 🌟🌟🌟
-      // ============================================================
-      const inviteDocRef = doc(db, 'invites', user.email!);
-      const inviteDoc = await getDoc(inviteDocRef);
 
-      if (inviteDoc.exists()) {
-        // 👤 パターンA：既存の会社から「招待」されて登録しに来た人（従業員）
-        const inviteData = inviteDoc.data();
+    
+    // 変更点：invitesではなく、usersコレクションの中に「自分のメアド」の箱がないか探す！
+    const preRegisteredDocRef = doc(db, 'users', user.email!);
+    const preRegisteredDoc = await getDoc(preRegisteredDocRef);
+
+    if (preRegisteredDoc.exists()) {
+        // 🟢 パターンA: 労務担当に事前追加されていて、今回初めてアカウントを作った従業員
+        const preData = preRegisteredDoc.data();
         
-        await setDoc(userDocRef, { 
-          role: 'employee', 
-          email: user.email, 
-          companyId: inviteData.companyId, // 招待状に書いてある会社IDを紐付ける！
-          createdAt: new Date() 
+        // 1. 新しいUIDの箱に、事前データをまるごと引っ越し（引き継ぎ）する！
+        await setDoc(userDocRef, {
+            ...preData, // 手動追加された時の名前や会社IDをすべて展開して合流
+            role: 'employee',
+            uid: user.uid,
+            createdAt: new Date()
         });
-        
-        // 会社IDを記憶してウィザード画面へ
-        localStorage.setItem('current_company_id', inviteData.companyId);
-        window.location.href = '/employee.html';
 
-      } else {
-        // 👑 パターンB：招待なし＝完全に初めてこのシステムを使う「会社開設者」！
+        // 2. 引っ越しが終わったら、古い「メアドの箱」は用済みなので削除する（お掃除）
+        // ※エラーが出る場合は、ファイルの先頭の import { ... } の中に deleteDoc を追加してください！
+        await deleteDoc(preRegisteredDocRef);
+
+        // 3. 会社IDを記憶して、入社ウィザード（またはダッシュボード）へ案内！
+        localStorage.setItem('current_company_id', preData.companyId);
+        window.location.href = '/employee-dashboard.html';
+
+    } else {
+        // 🔴 パターンB: 事前データなし＝完全に初めてシステムを使う「会社開設者（労務担当）」！
+        // （※ここから下の const newCompanyRef = ... の処理はそのまま残してください！）
         
         // 📦 Firestoreの仕組みを使って、世界に1つだけの新しい「ユニークな会社ID」を自動発行！
         const newCompanyRef = doc(collection(db, 'companies'));

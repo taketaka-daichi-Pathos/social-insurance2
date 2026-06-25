@@ -119,7 +119,9 @@ export const HEALTH_BRACKETS = [
 // 🌟 進化した計算エンジン（第4の引数「forceHealthGrade」を追加！）
 // 🌟 進化した計算エンジン（子育て支援金 完全対応版！）
 // 🌟 進化した計算エンジン（子育て支援金＆1円ズレ完全対応・安全装置付き版！）
-export function calculateSocialInsurance(totalWage, age = 30, rates = DEFAULT_RATES, forceHealthGrade) {
+export function calculateSocialInsurance(totalWage, age = 30, rates = DEFAULT_RATES, forceHealthGrade, isExempt = false, // 💡 元の位置（5番目）に戻す！
+forcePensionGrade // 🌟 一番最後（6番目）に追加！これなら他のコードを絶対に壊さない！
+) {
     let targetBracket;
     if (forceHealthGrade) {
         targetBracket = HEALTH_BRACKETS.find(b => b.grade === forceHealthGrade);
@@ -132,14 +134,26 @@ export function calculateSocialInsurance(totalWage, age = 30, rates = DEFAULT_RA
     const healthGrade = safeBracket.grade;
     let pensionGrade = 1;
     let standardPension = 88000;
-    if (healthGrade >= 4 && healthGrade <= 35) {
-        pensionGrade = healthGrade - 3;
-        standardPension = standardHealth;
+    // 👇🌟 厚生年金の独立計算ロジックをここに追加！ 🌟👇
+    if (forcePensionGrade) {
+        // 画面から厚年の指定が入ってきた場合は、健保を無視して独立させる！
+        pensionGrade = forcePensionGrade;
+        // 厚年等級からベース額(標準報酬月額)を逆算（厚年1等級 ＝ 健保4等級）
+        const pBracket = HEALTH_BRACKETS.find(b => b.grade === (forcePensionGrade + 3));
+        standardPension = pBracket ? pBracket.base : 88000;
     }
-    else if (healthGrade > 35) {
-        pensionGrade = 32;
-        standardPension = 650000;
+    else {
+        // 画面からの指定がない場合（通常時）は、今まで通りの連動ロジック
+        if (healthGrade >= 4 && healthGrade <= 35) {
+            pensionGrade = healthGrade - 3;
+            standardPension = standardHealth;
+        }
+        else if (healthGrade > 35) {
+            pensionGrade = 32;
+            standardPension = 650000;
+        }
     }
+    // ... 以降は今のコードのままでOKです！
     // 🛡️【NEW: 最強の安全装置】もし rates の中身が欠けていても、絶対にエラーを起こさせない！
     const safeHealthEmp = rates.healthRateEmp || (rates.healthRate ? rates.healthRate / 2 : 0);
     const safeHealthComp = rates.healthRateComp || (rates.healthRate ? rates.healthRate / 2 : 0);
@@ -149,25 +163,37 @@ export function calculateSocialInsurance(totalWage, age = 30, rates = DEFAULT_RA
     const nursingTotalRate = rates.nursingRate || (Math.round((safeNursingEmp + safeNursingComp) * 100000) / 100000);
     const pensionTotalRate = rates.pensionRate || (Math.round(((rates.pensionRateEmp || 0) + (rates.pensionRateComp || 0)) * 100000) / 100000);
     // 💡 1. 健康保険（総額から本人分を引く絶対法則）
-    const healthPremium = calcPremium(standardHealth, safeHealthEmp);
+    let healthPremium = calcPremium(standardHealth, safeHealthEmp);
     const totalHealthStatutory = Math.floor(Math.round(standardHealth * healthTotalRate * 1000) / 1000);
-    const healthPremiumComp = totalHealthStatutory - healthPremium;
+    let healthPremiumComp = totalHealthStatutory - healthPremium;
     // 💡 2. 厚生年金
-    const pensionPremium = calcPremium(standardPension, (pensionTotalRate / 2));
+    let pensionPremium = calcPremium(standardPension, (pensionTotalRate / 2));
     const totalPensionStatutory = Math.floor(Math.round(standardPension * pensionTotalRate * 1000) / 1000);
-    const pensionPremiumComp = totalPensionStatutory - pensionPremium;
+    let pensionPremiumComp = totalPensionStatutory - pensionPremium;
     // 💡 3. 介護保険
     const isNursingTarget = age >= 40 && age < 65;
-    const nursingPremium = isNursingTarget ? calcPremium(standardHealth, safeNursingEmp) : 0;
+    let nursingPremium = isNursingTarget ? calcPremium(standardHealth, safeNursingEmp) : 0;
     const totalNursingStatutory = isNursingTarget ? Math.floor(Math.round(standardHealth * nursingTotalRate * 1000) / 1000) : 0;
-    const nursingPremiumComp = isNursingTarget ? (totalNursingStatutory - nursingPremium) : 0;
+    let nursingPremiumComp = isNursingTarget ? (totalNursingStatutory - nursingPremium) : 0;
     // 💡 4. 子ども・子育て支援金
-    const childSupportRateEmp = rates.childSupportRateEmp || 0;
-    const childSupportRateComp = rates.childSupportRateComp || 0;
-    const childSupportPremium = calcPremium(standardHealth, childSupportRateEmp);
+    const childSupportRateEmp = (rates.childSupportRateEmp || 0) / 2;
+    // 👇🌟 この1行を追加！ 🌟👇
+    console.log(`🚨 エンジン稼働テスト: 元の率=${rates.childSupportRateEmp}, 折半後の率=${childSupportRateEmp}`);
+    const childSupportRateComp = (rates.childSupportRateComp || 0) / 2;
+    let childSupportPremium = calcPremium(standardHealth, childSupportRateEmp);
     const childTotalRate = Math.round((childSupportRateEmp + childSupportRateComp) * 100000) / 100000;
     const totalChildSupportStatutory = Math.floor(Math.round(standardHealth * childTotalRate * 1000) / 1000);
-    const childSupportPremiumComp = totalChildSupportStatutory - childSupportPremium;
+    let childSupportPremiumComp = totalChildSupportStatutory - childSupportPremium;
+    if (isExempt) {
+        healthPremium = 0;
+        healthPremiumComp = 0;
+        pensionPremium = 0;
+        pensionPremiumComp = 0;
+        nursingPremium = 0;
+        nursingPremiumComp = 0;
+        childSupportPremium = 0;
+        childSupportPremiumComp = 0;
+    }
     return {
         healthGrade,
         standardHealth,

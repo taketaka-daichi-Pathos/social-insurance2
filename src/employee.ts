@@ -243,11 +243,11 @@ infoForm?.addEventListener('submit', async (e) => {
     { id: 'gender', name: '性別' },
     { id: 'current-address', name: '現住所' },
     { id: 'mynumber', name: 'マイナンバー（12桁）' },
-    { id: 'pension-num', name: '基礎年金番号' },
-    { id: 'emp-insurance-num', name: '雇用保険被保険者番号' }, // ✨ これも必須化！
-    { id: 'bank-name', name: '振込先銀行名' },
-    { id: 'branch-name', name: '支店名' },
-    { id: 'account-num', name: '口座番号' },
+    // { id: 'pension-num', name: '基礎年金番号' },
+    // { id: 'emp-insurance-num', name: '雇用保険被保険者番号' }, // ✨ これも必須化！
+    // { id: 'bank-name', name: '振込先銀行名' },
+    // { id: 'branch-name', name: '支店名' },
+    // { id: 'account-num', name: '口座番号' },
     // 👇＝＝＝ これを一番下などに追加！ ＝＝＝👇
     { id: 'commute-route', name: '通勤経路' },
     { id: 'commute-allowance', name: '1ヶ月の定期代' }
@@ -306,10 +306,10 @@ infoForm?.addEventListener('submit', async (e) => {
       return true;
   };
 
-  // 💥 画像が足りなければここで送信ストップ！
-  if (!validateImage('mynumber-image', '⚠️ マイナンバーの画像が添付されていません！')) return;
-  if (!validateImage('pension-image', '⚠️ 年金手帳（または基礎年金番号通知書）の画像が添付されていません！')) return;
-  if (!validateImage('emp-insurance-image', '⚠️ 雇用保険被保険者証の画像が添付されていません！')) return;
+  // // 💥 画像が足りなければここで送信ストップ！
+  // if (!validateImage('mynumber-image', '⚠️ マイナンバーの画像が添付されていません！')) return;
+  // if (!validateImage('pension-image', '⚠️ 年金手帳（または基礎年金番号通知書）の画像が添付されていません！')) return;
+  // if (!validateImage('emp-insurance-image', '⚠️ 雇用保険被保険者証の画像が添付されていません！')) return;
 
 
   // ==========================================
@@ -433,14 +433,54 @@ infoForm?.addEventListener('submit', async (e) => {
       updatedAt: new Date()
     };
 
-    await setDoc(doc(db, 'users', currentUserId), employeeData, { merge: true });
-    
-    // 🌟 ここを修正！ステータスを戻すと同時に、差し戻しフラグをへし折る！
-    await updateDoc(doc(db, 'invites', currentUserEmail), { 
+    console.log("=== 🚀 保存処理スタート ===");
+    // 🌟 1. URLから「手動モード」判定
+    const urlParams = new URLSearchParams(window.location.search);
+    const isManualMode = urlParams.get('mode') === 'manual';
+    console.log("手動モード判定:", isManualMode);
+
+    let targetDocId = currentUserId;
+    let targetEmail = currentUserEmail || "";
+
+    if (isManualMode) {
+        const inputEmail = prompt("【手動追加】\n新規追加する従業員のメールアドレスを入力してください:");
+        console.log("入力されたメアド:", inputEmail);
+        
+        if (!inputEmail) {
+            alert("入力がキャンセルされました。保存を中止します。");
+            return; 
+        }
+        targetDocId = inputEmail;
+        targetEmail = inputEmail;
+    }
+
+    if (!targetDocId) {
+        console.error("💥 エラー: 保存先のIDが空っぽです！");
+        throw new Error("保存先のドキュメントIDが見つかりません。");
+    }
+
+    const myCompanyId = localStorage.getItem('current_company_id') || "";
+    console.log("セットする会社ID:", myCompanyId);
+
+    // 🌟 3. usersコレクションに保存
+    console.log("usersコレクションに保存中...");
+    await setDoc(doc(db, 'users', targetDocId), {
+        ...employeeData,
+        email: targetEmail,
+        companyId: myCompanyId
+    }, { merge: true });
+
+    // 🌟 4. invitesコレクションに保存
+    console.log("invitesコレクションに保存中...");
+    await setDoc(doc(db, 'invites', targetDocId), {
+        email: targetEmail, 
         status: '確認待ち',
-        isRemanded: false,  // ✨ これがバナーを消去する魔法の1行
-        remandReason: ""    // ✨ 次のために理由も空っぽにリセットしておく
-    });
+        isRemanded: false,
+        remandReason: "",
+        companyId: myCompanyId
+    }, { merge: true });
+    
+    console.log("=== ✨ 保存完了！ ===");
 
    // 🌟 --- ここから追加：扶養追加があればライフイベントに申請を自動生成 ---
   if (radioDepYes?.checked && dependentData) {
@@ -478,35 +518,37 @@ infoForm?.addEventListener('submit', async (e) => {
 }
 
 
+if (msgDiv) {
+  msgDiv.style.backgroundColor = '#d4edda';
+  msgDiv.style.color = '#155724';
+  // 🌟 修正1：手動モードか通常ルートかで完了メッセージを切り替える！
+  msgDiv.innerText = isManualMode 
+      ? '✓ 手動追加が完了しました！このタブを閉じて管理画面を更新してください。' 
+      : '✓ 提出が完了しました！書類画像も安全に送信されました。';
+}
+infoForm.style.display = 'none'; 
 
-    if (msgDiv) {
-      msgDiv.style.backgroundColor = '#d4edda';
-      msgDiv.style.color = '#155724';
-      msgDiv.innerText = '✓ 提出が完了しました！書類画像も安全に送信されました。';
-    }
-    infoForm.style.display = 'none'; 
+// ① ダッシュボードへ移動ボタンを出現させるかの制御
+const toDashboardBtn = document.getElementById('btn-to-dashboard');
+if (toDashboardBtn) {
+  // 🌟 修正2：手動モードの時は従業員ページに行かせないため「none」、通常時は「block」
+  toDashboardBtn.style.display = isManualMode ? 'none' : 'block';
+}
 
+// ② もう一度「提出」を押されないように、元の提出ボタンを隠す（親切設計！）
+const submitBtn = document.querySelector('.btn-submit') as HTMLButtonElement;
+if (submitBtn) {
+  submitBtn.style.display = 'none';
+}
 
-    // ① ダッシュボードへ移動ボタンを出現させる（display: none を block にする）
-    const toDashboardBtn = document.getElementById('btn-to-dashboard');
-    if (toDashboardBtn) {
-      toDashboardBtn.style.display = 'block';
-    }
-
-    // ② もう一度「提出」を押されないように、元の提出ボタンを隠す（親切設計！）
-    const submitBtn = document.querySelector('.btn-submit') as HTMLButtonElement;
-    if (submitBtn) {
-      submitBtn.style.display = 'none';
-    }
-
-  } catch (error) {
-    console.error("提出エラー:", error);
-    if (msgDiv) {
-      msgDiv.style.backgroundColor = '#f8d7da';
-      msgDiv.style.color = '#721c24';
-      msgDiv.innerText = '送信に失敗しました。';
-    }
-  }
+} catch (error) {
+console.error("提出エラー:", error);
+if (msgDiv) {
+  msgDiv.style.backgroundColor = '#f8d7da';
+  msgDiv.style.color = '#721c24';
+  msgDiv.innerText = '送信に失敗しました。';
+}
+}
 });
 // =========================================================
 // 🌟 最強の半角数字バリデーション起動エンジン

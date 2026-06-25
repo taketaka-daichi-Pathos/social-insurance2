@@ -2,9 +2,11 @@
   <button class="settings-sub-tab active" onclick="switchSettingsTab('settings-egov', this)" style="padding: 10px 20px; font-weight: bold; background: none; border: none; border-bottom: 3px solid #0056b3; color: #0056b3; cursor: pointer;">
       🏢 事業所・公的番号設定
   </button>
+  <div style="display: none;">
   <button class="settings-sub-tab" onclick="switchSettingsTab('settings-payroll', this)" style="padding: 10px 20px; font-weight: bold; background: none; border: none; color: #64748b; cursor: pointer;">
       📅 給与支払日設定
   </button>
+  </div>
   <button class="settings-sub-tab" onclick="switchSettingsTab('settings-rates', this)" style="padding: 10px 20px; font-weight: bold; background: none; border: none; color: #64748b; cursor: pointer;">
       📊 料率設定
   </button>
@@ -96,6 +98,9 @@
   </div>
 </div>
 </div>
+
+
+<div style="display: none;">
 <div id="settings-payroll" class="settings-tab-content" style="display: none;">
   <div class="panel" style="background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;">
       <h3 style="margin-top: 0; color: #0056b3;">🏢 給与計算連動マスタ（全社共通ルール）</h3>
@@ -148,6 +153,11 @@
       </button>
   </div>
 </div>
+
+</div>
+
+
+
 
 <div id="settings-rates" class="settings-tab-content" style="display: none;">
   <div style="background: #ffffff; padding: 24px; border-radius: 8px; border: 1px solid #ced4da; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 24px;">
@@ -243,7 +253,7 @@
               </div>
           </div>
 
-          <div style="background: #fff; border: 1px solid #dee2e6; padding: 20px; border-radius: 6px; margin-bottom: 20px;">
+          <!-- <div style="background: #fff; border: 1px solid #dee2e6; padding: 20px; border-radius: 6px; margin-bottom: 20px;">
               <h3 style="margin-top: 0; color: #333; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px;">🌱 子育て関連・その他（共通設定）</h3>
               
               <div style="display: flex; gap: 20px; flex-wrap: wrap;">
@@ -262,7 +272,7 @@
                       <label style="font-size: 13px; margin-top: 8px; display: inline-block;">会社負担: <input type="number" id="input-child-support-comp" step="0.001" value="0.100" style="width: 70px; padding: 4px; border: 1px solid #ccc; border-radius: 4px;"> %</label>
                   </div>
               </div>
-          </div>
+          </div> -->
 
           <div style="text-align: right; margin-top: 20px;">
               <span id="save-msg-insurance" style="margin-right: 15px; color: #28a745; font-weight: bold; display: none;">保存しました！</span>

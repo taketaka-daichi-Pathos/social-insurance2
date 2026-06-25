@@ -105,6 +105,9 @@
             <span style="font-weight: bold; color: #0056b3;">📋 手続きタスク一覧</span>
             
             <div style="display: flex; gap: 8px;">
+              <button id="btn-add-manual-employee" style="padding: 8px 16px; background-color: #28a745; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: 0.2s;">
+                ➕ 従業員を追加
+              </button>
               <button id="btn-export-shikaku-csv" style="padding: 8px 16px; background-color: #dc3545; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: 0.2s;">
                 📥 e-Gov 資格取得届 一括出力
               </button>
@@ -153,7 +156,8 @@
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; align-items: start;">
               <div>
                 <label style="font-size:12px; font-weight:bold;">入社日</label>
-                <input type="date" id="hr-join-date" style="width: 100%; padding: 6px; box-sizing:border-box; height: 32px;">
+                <!-- 🌟 ここに min="1900-01-01" max="2099-12-31" を追加！ -->
+                <input type="date" id="hr-join-date" min="1900-01-01" max="2099-12-31" style="width: 100%; padding: 6px; box-sizing:border-box; height: 32px;">
               </div>
               <div>
                 <label style="font-size:12px; font-weight:bold;">雇用形態</label>
@@ -226,7 +230,7 @@
 
               <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                 <div style="background: #e3f2fd; padding: 6px; border-radius: 4px; text-align: center;">
-                   <div style="font-size:10px; color:#666;">社保判定用 月額（交通費等を除く）</div>
+                   <div style="font-size:10px; color:#666;">小計（交通費を除く）</div>
                    <div style="font-size:16px; font-weight:bold; color:#0056b3;"><span id="hr-88k-wage">0</span> 円</div>
                 </div>
                 <div>

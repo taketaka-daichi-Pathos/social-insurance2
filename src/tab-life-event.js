@@ -1,16 +1,13 @@
 import { collection, getDocs, doc, updateDoc, query, where, getDoc, arrayUnion, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './config/firebase.js'; // ※ご自身の環境に合わせてください
 export async function initLifeEventUI() {
+    setupManualEventPanel();
+    // 🌟🌟🌟 🌟🌟🌟 🌟🌟🌟
     console.log("🎉 ライフイベント画面（一括処理＆タスク自動生成版）が正常に読み込まれました！");
     // ==========================================
     // 【パート1】従業員からの申請（統合版：名前変換・アコーディオン・一括承認）
     // ==========================================
     await loadUnifiedRequests(); // 画面を開いた時にデータを読み込む！
-    // ==========================================
-    // 【パート1】従業員からの申請（統合版：名前変換・アコーディオン・一括承認）
-    // ==========================================
-    // 💡 このファイルの一番上（importの下あたり）に置いてください。
-    // await loadUnifiedRequests(); の呼び出しは、DOMContentLoaded の中に入れるとより安全です。
     async function loadUnifiedRequests() {
         const container = document.getElementById('unified-request-container');
         const badge = document.getElementById('request-badge');
@@ -90,7 +87,6 @@ export async function initLifeEventUI() {
                   追加家族: <strong>${dep.lastNameKanji || ''} ${dep.firstNameKanji || ''}</strong> (${dep.relation || '不明'})
               </div>`;
                     }
-                    // オプション（出産などの申請）
                     // オプション（出産などの申請）
                     if (req.options && req.options.length > 0) {
                         detailHtml += `<ul style="margin: 5px 0 0; padding-left: 20px; font-size: 13px; color: #333; font-weight: bold;">`;
@@ -447,7 +443,7 @@ export async function initLifeEventUI() {
                                     const empDoc = empSnapshot.docs[0];
                                     if (empDoc) {
                                         await updateDoc(doc(db, "users", empDoc.id), {
-                                            socialInsuranceExempt: true, // 💡 これが給与計算を0円にする最強のフラグ！
+                                            isSocialInsuranceExempt: true, // 💡 これが給与計算を0円にする最強のフラグ！
                                             leaveStatus: '休業中(免除)' // 💡 バッジ表示用のステータス
                                         });
                                     }
@@ -792,5 +788,134 @@ function getAgencyByTaskTitle(title) {
     if (title.includes('介護保険'))
         return '社内';
     return '従業員本人 / 社内';
+}
+// ============================================================================
+// 🌟🌟🌟 労務手動登録パネルの制御ロジック（デバッグ監視カメラ付き！） 🌟🌟🌟
+// ============================================================================
+export async function setupManualEventPanel() {
+    console.log("🚀 [Debug] setupManualEventPanel が実行されました！");
+    const currentCompanyId = localStorage.getItem('current_company_id');
+    console.log("🏢 [Debug] 現在の会社ID (localStorage):", currentCompanyId);
+    if (!currentCompanyId) {
+        console.error("❌ [Debug] 会社IDが取得できないため、ここで処理を強制終了します！");
+        return;
+    }
+    const empSelect = document.getElementById('manual-event-emp');
+    const typeSelect = document.getElementById('manual-event-type');
+    const startDateInput = document.getElementById('event-start-date');
+    const endDateInput = document.getElementById('event-end-date');
+    const endDateContainer = document.getElementById('event-end-date-container');
+    const dateLabel = document.getElementById('event-date-label');
+    const btnSubmitManual = document.getElementById('btn-submit-manual-event');
+    console.log("🔍 [Debug] プルダウン要素(empSelect)の取得結果:", empSelect);
+    // ① 従業員リストの読み込み
+    if (empSelect) {
+        try {
+            console.log("📡 [Debug] Firestoreの 'users' コレクションへ検索リクエストを送信します...");
+            const q = query(collection(db, 'users'), where('companyId', '==', currentCompanyId));
+            const snapshot = await getDocs(q);
+            console.log(`✅ [Debug] データ取得完了！ 取得できた従業員数: ${snapshot.size} 件`);
+            if (snapshot.empty) {
+                console.warn("⚠️ [Debug] 検索結果が0件です。会社IDが一致するユーザーがいません。");
+            }
+            empSelect.innerHTML = '<option value="">選択してください...</option>';
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                const empName = `${data.lastNameKanji || ''} ${data.firstNameKanji || ''}`.trim();
+                console.log(`👤 [Debug] プルダウンに追加: ${empName} (ドキュメントID: ${doc.id})`);
+                const option = document.createElement('option');
+                option.value = doc.id;
+                option.textContent = `${data.employeeId || 'ID未設定'} : ${empName}`;
+                empSelect.appendChild(option);
+            });
+        }
+        catch (error) {
+            console.error("❌ [Debug] Firestoreへのアクセス中にエラーが発生:", error);
+        }
+    }
+    else {
+        console.error("❌ [Debug] HTML内に 'manual-event-emp' のIDを持つ要素が存在しません！（HTMLの描画より先にJSが走っている可能性があります）");
+    }
+    // ② 連動ギミックの監視
+    if (typeSelect) {
+        typeSelect.addEventListener('change', () => {
+            console.log("🔄 [Debug] イベント種類が切り替わりました:", typeSelect.value);
+            const val = typeSelect.value;
+            if (val === 'maternity_leave') {
+                dateLabel.innerText = '📅 休業期間（開始日 〜 終了予定日）';
+                endDateContainer.style.display = 'flex';
+            }
+            else if (val === 'return_work') {
+                dateLabel.innerText = '🌸 復職日';
+                endDateContainer.style.display = 'none';
+                endDateInput.value = '';
+            }
+            else {
+                dateLabel.innerText = '📅 発生日 / 変更日';
+                endDateContainer.style.display = 'none';
+                endDateInput.value = '';
+            }
+        });
+    }
+    // ③ 登録ボタンの処理
+    if (btnSubmitManual) {
+        btnSubmitManual.onclick = async () => {
+            console.log("👆 [Debug] イベント登録ボタンが押されました！");
+            const empId = empSelect.value;
+            const eventType = typeSelect.value;
+            const startDate = startDateInput.value;
+            const endDate = endDateInput.value;
+            // 1. 未入力チェック
+            if (!empId || !eventType || !startDate) {
+                alert("⚠️ 対象の従業員、イベント種類、開始日を入力してください。");
+                return;
+            }
+            if (!confirm('この内容でイベントを登録し、対象者のステータスを更新しますか？\n（※タスクの生成は行われません）'))
+                return;
+            try {
+                // 🌟 empId には直接ドキュメントIDが入っているので、直接アクセスできる！
+                const userRef = doc(db, 'users', empId);
+                // 2. イベントごとのマスタ更新処理
+                if (eventType === 'maternity_leave') {
+                    // 👶 産休・育休の開始：最強の「免除フラグ」をONにする！
+                    await updateDoc(userRef, {
+                        issocialInsuranceExempt: true, // 💡 これで給与計算が0円になる！
+                        leaveStatus: '休業中(免除)',
+                        leaveStartDate: startDate,
+                        leaveEndDate: endDate || null,
+                        updatedAt: new Date()
+                    });
+                    alert("✅ 産休・育休を手動登録し、社会保険料の【免除設定をON】にしました！\n（給与計算時に保険料が0円として計算されます）");
+                }
+                else if (eventType === 'return_work') {
+                    // 🌸 復職：免除フラグをOFFに戻す！（これがないと永遠に0円になってしまいます）
+                    await updateDoc(userRef, {
+                        isSocialInsuranceExempt: false, // 💡 免除終了、通常計算に戻る
+                        leaveStatus: '在籍',
+                        leaveStartDate: null,
+                        leaveEndDate: null,
+                        updatedAt: new Date()
+                    });
+                    alert("✅ 復職を手動登録し、社会保険料の【免除設定を解除】しました！\n（次回の給与計算から通常の保険料が引かれます）");
+                }
+                else {
+                    // その他のイベントの場合
+                    await updateDoc(userRef, { updatedAt: new Date() });
+                    alert("✅ イベントを登録しました！");
+                }
+                // 3. フォームのリセット
+                empSelect.value = '';
+                typeSelect.value = '';
+                startDateInput.value = '';
+                endDateInput.value = '';
+                endDateContainer.style.display = 'none';
+                dateLabel.innerText = '📅 発生日 / 変更日';
+            }
+            catch (error) {
+                console.error("❌ [Debug] マスタ更新エラー:", error);
+                alert("⚠️ データベースの更新中にエラーが発生しました。");
+            }
+        };
+    }
 }
 //# sourceMappingURL=tab-life-event.js.map
